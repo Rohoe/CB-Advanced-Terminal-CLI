@@ -318,6 +318,25 @@ class TradingTerminal:
         except Exception as e:
             self.handle_order_error(str(e))
 
+    def get_current_prices(self, product_id: str):
+        try:
+            product_book = self.client.get_product_book(product_id, limit=1)
+            if 'pricebook' in product_book:
+                pricebook = product_book['pricebook']
+                if 'bids' in pricebook and 'asks' in pricebook and pricebook['bids'] and pricebook['asks']:
+                    bid = float(pricebook['bids'][0]['price'])
+                    ask = float(pricebook['asks'][0]['price'])
+                    mid = (bid + ask) / 2
+                    return {'bid': bid, 'mid': mid, 'ask': ask}
+                else:
+                    print(f"Incomplete order book data for {product_id}. Current data: {pricebook}")
+            else:
+                print(f"Unexpected response format for {product_id}. Response: {product_book}")
+            return None
+        except Exception as e:
+            print(f"Error fetching current prices for {product_id}: {str(e)}")
+            return None
+
     def place_twap_order(self):
         if not self.client:
             print("Please login first.")
@@ -330,6 +349,13 @@ class TradingTerminal:
         duration = int(input("Enter TWAP duration in minutes: "))
         num_slices = int(input("Enter number of slices for TWAP: "))
 
+        print("\nSelect price type for order placement:")
+        print("1. Original limit price")
+        print("2. Current market bid")
+        print("3. Current market mid")
+        print("4. Current market ask")
+        price_type = input("Enter your choice (1-4): ")
+
         slice_size = order_input["base_size"] / num_slices
         slice_interval = duration * 60 / num_slices
 
@@ -337,12 +363,13 @@ class TradingTerminal:
         print(f"Market: {order_input['product_id']}")
         print(f"Side: {order_input['side']}")
         print(f"Total Quantity: {order_input['base_size']}")
-        print(f"Limit Price: ${order_input['limit_price']:,.2f}")
-        print(f"Total USD Value: ${order_input['usd_value']:,.2f}")
+        print(f"Original Limit Price: ${order_input['limit_price']:,.2f}")
+        print(f"Total USD Value (at limit price): ${order_input['usd_value']:,.2f}")
         print(f"Duration: {duration} minutes")
         print(f"Number of Slices: {num_slices}")
         print(f"Size per Slice: {slice_size}")
         print(f"Interval between Slices: {slice_interval:.2f} seconds")
+        print(f"Price Type: {'Original Limit' if price_type == '1' else 'Market Bid' if price_type == '2' else 'Market Mid' if price_type == '3' else 'Market Ask'}")
 
         confirm = input("\nDo you want to execute this TWAP order? (yes/no): ").lower()
         if confirm != 'yes':
@@ -350,31 +377,56 @@ class TradingTerminal:
             return
 
         total_executed = 0
+        total_value_executed = 0
         for i in range(num_slices):
             try:
-                order_response = self.client.limit_order_gtc(
-                    client_order_id=f"twap-order-{int(time.time())}-{i}",
-                    product_id=order_input["product_id"],
-                    side=order_input["side"],
-                    base_size=str(slice_size),
-                    limit_price=str(order_input["limit_price"])
-                )
-                if 'order_id' in order_response:
-                    print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}")
-                    total_executed += slice_size
+                current_prices = self.get_current_prices(order_input["product_id"])
+                if not current_prices:
+                    print(f"Skipping slice {i+1} due to error in fetching current prices.")
+                    continue
+
+                if price_type == '1':
+                    execution_price = order_input["limit_price"]
+                elif price_type == '2':
+                    execution_price = current_prices['bid']
+                elif price_type == '3':
+                    execution_price = current_prices['mid']
                 else:
-                    print(f"Failed to place TWAP slice {i+1}/{num_slices}.")
-                    if 'error_response' in order_response:
-                        print(f"Error details: {order_response['error_response']}")
-                
+                    execution_price = current_prices['ask']
+
+                # Check if the execution price is favorable
+                if (order_input["side"] == "BUY" and execution_price <= order_input["limit_price"]) or \
+                   (order_input["side"] == "SELL" and execution_price >= order_input["limit_price"]):
+                    order_response = self.client.limit_order_gtc(
+                        client_order_id=f"twap-order-{int(time.time())}-{i}",
+                        product_id=order_input["product_id"],
+                        side=order_input["side"],
+                        base_size=str(slice_size),
+                        limit_price=str(execution_price)
+                    )
+                    if 'order_id' in order_response:
+                        print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}")
+                        print(f"Execution Price: ${execution_price:,.2f}")
+                        total_executed += slice_size
+                        total_value_executed += slice_size * execution_price
+                    else:
+                        print(f"Failed to place TWAP slice {i+1}/{num_slices}.")
+                        if 'error_response' in order_response:
+                            print(f"Error details: {order_response['error_response']}")
+                else:
+                    print(f"Skipping slice {i+1} as the current price (${execution_price:,.2f}) is not favorable compared to the limit price (${order_input['limit_price']:,.2f}).")
+
                 if i < num_slices - 1:
                     print(f"Waiting {slice_interval:.2f} seconds before next slice...")
                     time.sleep(slice_interval)
             except Exception as e:
                 print(f"Error placing TWAP slice {i+1}: {str(e)}")
 
-        print(f"TWAP order execution completed. Total quantity executed: {total_executed}")
-        print(f"Total USD Value executed: ${total_executed * order_input['limit_price']:,.2f}")
+        print(f"\nTWAP order execution completed.")
+        print(f"Total quantity executed: {total_executed}")
+        print(f"Total USD Value executed: ${total_value_executed:,.2f}")
+        if total_executed > 0:
+            print(f"Average execution price: ${total_value_executed / total_executed:,.2f}")
 
     def place_adaptive_twap_order(self):
         if not self.client:
