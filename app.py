@@ -6,6 +6,25 @@ import json
 from threading import Lock
 from tabulate import tabulate
 from datetime import datetime, timedelta, timezone
+from functools import wraps
+
+def retry_with_backoff(retries=3, backoff_in_seconds=1):
+    def wrapper(func):
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            x = 0
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if x == retries:
+                        raise
+                    sleep = (backoff_in_seconds * 2 ** x +
+                             random.uniform(0, 1))
+                    time.sleep(sleep)
+                    x += 1
+        return wrapped
+    return wrapper
 
 class RateLimiter:
     def __init__(self, rate, burst):
@@ -318,6 +337,7 @@ class TradingTerminal:
         except Exception as e:
             self.handle_order_error(str(e))
 
+    @retry_with_backoff(retries=3, backoff_in_seconds=1)
     def get_current_prices(self, product_id: str):
         try:
             product_book = self.client.get_product_book(product_id, limit=1)
