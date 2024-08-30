@@ -5,13 +5,14 @@ import time
 import random
 from threading import Lock
 from threading import Thread
-from queue import Queue
+from queue import Queue, Empty
 from tabulate import tabulate
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from collections import defaultdict
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configurable parameters
 CONFIG = {
@@ -75,6 +76,24 @@ class TradingTerminal:
     def __init__(self):
         self.client = None
         self.rate_limiter = RateLimiter(CONFIG['rate_limit_requests'], CONFIG['rate_limit_burst'])
+        self.order_queue = Queue()
+        self.filled_orders = []
+        self.order_lock = Lock()
+        self.is_running = True  # Add this line
+        self.checker_thread = Thread(target=self.order_status_checker)
+        self.checker_thread.start()
+        self.order_status_cache = {}
+        self.cache_ttl = 5  # Cache Time To Live in seconds
+        self.failed_orders = set()  # Set to keep track of failed order placements
+        self.price_precision = {
+            'ETH-USDC': 2,
+            'BTC-USDC': 2,
+            # Add more pairs as needed
+        }
+
+    def round_price(self, price, product_id):
+        precision = self.price_precision.get(product_id, 2)  # Default to 2 if not specified
+        return round(float(price), precision)
 
     # Authentication methods
     def login(self):
@@ -299,12 +318,7 @@ class TradingTerminal:
         except Exception as e:
             self.handle_order_error(str(e))
 
-
-
     def place_twap_order(self):
-        """
-        Place a Time-Weighted Average Price (TWAP) order with periodic checks for unfilled orders.
-        """
         if not self.client:
             logging.warning("Attempt to place TWAP order without login")
             print("Please login first.")
@@ -348,16 +362,9 @@ class TradingTerminal:
             print("TWAP order cancelled.")
             return
 
-        # Initialize order tracking
-        orders = Queue()
-        total_executed = 0
-        total_value_executed = 0
+        total_placed = 0
+        total_value_placed = 0
         orders_placed = 0
-        orders_filled = 0
-
-        # Start the order checking thread
-        checker_thread = Thread(target=self.order_status_checker, args=(orders,))
-        checker_thread.start()
 
         try:
             for i in range(num_slices):
@@ -378,42 +385,46 @@ class TradingTerminal:
 
                 # Check if the execution price is favorable
                 if (order_input["side"] == "BUY" and execution_price <= order_input["limit_price"]) or \
-                   (order_input["side"] == "SELL" and execution_price >= order_input["limit_price"]):
-                    order_response = self.limit_order_gtc(
-                        client_order_id=f"twap-order-{int(time.time())}-{i}",
-                        product_id=order_input["product_id"],
-                        side=order_input["side"],
-                        base_size=str(slice_size),
-                        limit_price=str(execution_price)
-                    )
-                    orders_placed += 1
-                    if 'order_id' in order_response:
-                        logging.info(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}, "
-                                     f"Execution Price: ${execution_price:,.2f}")
-                        print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}")
-                        print(f"Execution Price: ${execution_price:,.2f}")
-                        
-                        # Add order to the queue for checking
-                        orders.put({
-                            'order_id': order_response['order_id'],
-                            'size': slice_size,
-                            'price': execution_price
-                        })
-                    else:
-                        logging.error(f"Failed to place TWAP slice {i+1}/{num_slices}. "
-                                      f"Error: {order_response.get('error_response', 'Unknown error')}")
-                        print(f"Failed to place TWAP slice {i+1}/{num_slices}.")
-                        if 'error_response' in order_response:
-                            print(f"Error details: {order_response['error_response']}")
+                (order_input["side"] == "SELL" and execution_price >= order_input["limit_price"]):
+                    try:
+                        order_response = self.place_limit_order_with_retry(
+                            product_id=order_input["product_id"],
+                            side=order_input["side"],
+                            base_size=str(slice_size),
+                            limit_price=str(execution_price)
+                        )
+                        if order_response and 'order_id' in order_response and order_response['order_id']:
+                            orders_placed += 1
+                            total_placed += slice_size
+                            total_value_placed += slice_size * float(order_response['order_configuration']['limit_limit_gtc']['limit_price'])
+                            logging.info(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}, "
+                                        f"Execution Price: ${float(order_response['order_configuration']['limit_limit_gtc']['limit_price']):.2f}")
+                            print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}")
+                            print(f"Execution Price: ${float(order_response['order_configuration']['limit_limit_gtc']['limit_price']):.2f}")
+                            
+                            # Add order to the queue for checking
+                            self.order_queue.put({
+                                'order_id': order_response['order_id'],
+                                'size': slice_size,
+                                'price': float(order_response['order_configuration']['limit_limit_gtc']['limit_price'])
+                            })
+                        else:
+                            logging.error(f"Failed to place TWAP slice {i+1}/{num_slices}.")
+                            print(f"Failed to place TWAP slice {i+1}/{num_slices}.")
+                            self.failed_orders.add(i)  # Add the slice number to failed orders set
+                    except Exception as e:
+                        logging.error(f"Error placing TWAP slice {i+1}/{num_slices}: {str(e)}")
+                        print(f"Error placing TWAP slice {i+1}/{num_slices}: {str(e)}")
+                        self.failed_orders.add(i)  # Add the slice number to failed orders set
                 else:
                     logging.info(f"Skipping TWAP slice {i+1} due to unfavorable price. "
-                                 f"Current: ${execution_price:,.2f}, Limit: ${order_input['limit_price']:,.2f}")
-                    print(f"Skipping slice {i+1} as the current price (${execution_price:,.2f}) is not favorable "
-                          f"compared to the limit price (${order_input['limit_price']:,.2f}).")
+                                f"Current: ${execution_price:.2f}, Limit: ${order_input['limit_price']:.2f}")
+                    print(f"Skipping slice {i+1} as the current price (${execution_price:.2f}) is not favorable "
+                        f"compared to the limit price (${order_input['limit_price']:.2f}).")
 
                 # Update and display progress
-                total_executed, total_value_executed, orders_filled = self.update_order_stats(orders)
-                self.display_twap_progress(i+1, num_slices, orders_placed, orders_filled, total_executed, total_value_executed)
+                total_filled, total_value_filled, orders_filled = self.update_order_stats()
+                self.display_twap_progress(i+1, num_slices, orders_placed, orders_filled, total_placed, total_filled, total_value_placed, total_value_filled)
 
                 if i < num_slices - 1:
                     sleep_time = max(CONFIG['twap_slice_delay'], slice_interval)
@@ -426,105 +437,212 @@ class TradingTerminal:
             print(f"Error during TWAP execution: {str(e)}")
 
         finally:
-            # Signal the checker thread to stop
-            orders.put(None)
-            checker_thread.join()
-
+            # Wait for a short period to allow any final order fills to be processed
+            time.sleep(5)
+            
             # Final update and display of stats
-            total_executed, total_value_executed, orders_filled = self.update_order_stats(orders)
-            self.display_twap_summary(orders_placed, orders_filled, total_executed, total_value_executed)
+            total_filled, total_value_filled, orders_filled = self.update_order_stats()
+            self.display_twap_summary(orders_placed, orders_filled, total_placed, total_filled, total_value_placed, total_value_filled)
 
-    def order_status_checker(self, orders):
+    @retry_with_backoff(retries=3, backoff_in_seconds=1)
+    def place_limit_order_with_retry(self, product_id, side, base_size, limit_price):
         """
-        Continuously check the status of unfilled orders.
-        """
-        while True:
-            order = orders.get()
-            if order is None:
-                break
-
-            filled_info = self.check_order_filled(order['order_id'])
-            if filled_info['filled']:
-                order['filled'] = True
-                order['filled_size'] = filled_info['filled_size']
-                order['filled_price'] = filled_info['filled_price']
-            else:
-                orders.put(order)  # Put the unfilled order back in the queue
-
-            time.sleep(1)  # Avoid hitting rate limits
-
-    def update_order_stats(self, orders):
-        """
-        Update order statistics based on the current state of orders.
-        """
-        total_executed = 0
-        total_value_executed = 0
-        orders_filled = 0
-
-        # Create a copy of the queue to iterate over
-        temp_queue = Queue()
-        while not orders.empty():
-            order = orders.get()
-            if order.get('filled', False):
-                total_executed += order['filled_size']
-                total_value_executed += order['filled_size'] * order['filled_price']
-                orders_filled += 1
-            else:
-                temp_queue.put(order)
-
-        # Restore the original queue
-        while not temp_queue.empty():
-            orders.put(temp_queue.get())
-
-        return total_executed, total_value_executed, orders_filled
-
-    def check_order_filled(self, order_id):
-        """
-        Check if an order has been filled.
+        Place a limit order with retry logic and price rounding.
         """
         try:
-            order = self.client.get_order(order_id)
-            filled = order['status'] == 'FILLED'
-            filled_size = float(order['filled_size']) if filled else 0
-            filled_price = float(order['average_filled_price']) if filled else 0
-            return {'filled': filled, 'filled_size': filled_size, 'filled_price': filled_price}
+            rounded_price = self.round_price(limit_price, product_id)
+            order_response = self.client.limit_order_gtc(
+                client_order_id=f"twap-order-{int(time.time())}",
+                product_id=product_id,
+                side=side,
+                base_size=str(base_size),
+                limit_price=str(rounded_price)
+            )
+            if 'order_id' not in order_response or not order_response['order_id']:
+                logging.error(f"Order placement failed. Response: {order_response}")
+                return None
+            return order_response
         except Exception as e:
-            logging.error(f"Error checking order status: {str(e)}")
+            logging.error(f"Error placing limit order: {str(e)}")
+            raise  # Re-raise the exception to trigger the retry mechanism
+
+    def stop_checker_thread(self):
+        """
+        Stop the order status checker thread.
+        """
+        self.is_running = False
+        self.order_queue.put(None)  # Signal the thread to stop
+        self.checker_thread.join()  # Wait for the thread to finish
+        logging.info("Order status checker thread stopped.")
+
+    def update_order_stats(self):
+        total_filled = 0
+        total_value_filled = 0
+        orders_filled = 0
+
+        with self.order_lock:
+            for order in self.filled_orders:
+                total_filled += order['filled_size']
+                total_value_filled += order['filled_size'] * order['filled_price']
+                orders_filled += 1
+
+        logging.debug(f"Current stats - Orders filled: {orders_filled}, Total filled: {total_filled}, Total value filled: {total_value_filled}")
+        return total_filled, total_value_filled, orders_filled
+    
+    def check_order_filled(self, order_id):
+        if not order_id:
             return {'filled': False, 'filled_size': 0, 'filled_price': 0}
 
-    def display_twap_progress(self, current_slice, total_slices, orders_placed, orders_filled, total_executed, total_value_executed):
+        current_time = time.time()
+        
+        # Check cache first
+        if order_id in self.order_status_cache:
+            cached_status, cache_time = self.order_status_cache[order_id]
+            if current_time - cache_time < self.cache_ttl:
+                return cached_status
+
+        try:
+            order_response = self.client.get_order(order_id)
+            
+            if 'order' not in order_response:
+                logging.warning(f"Unexpected response format for order {order_id}. Response: {order_response}")
+                return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+
+            order = order_response['order']
+            
+            if 'status' not in order:
+                logging.warning(f"Order {order_id} does not have a 'status' field. Full order: {order}")
+                return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+
+            filled = order['status'] == 'FILLED'
+            filled_size = float(order.get('filled_size', 0))
+            filled_price = float(order.get('average_filled_price', 0))
+            
+            status = {'filled': filled, 'filled_size': filled_size, 'filled_price': filled_price}
+            
+            # Update the cache
+            self.order_status_cache[order_id] = (status, current_time)
+            
+            return status
+        except Exception as e:
+            logging.error(f"Error checking order status for {order_id}: {str(e)}")
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+
+    def check_order_filled_alternative(self, order_id):
         """
-        Display the progress of the TWAP order execution.
+        Alternative method to check if an order has been filled when the order is not found.
         """
+        if not order_id:
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+
+        try:
+            # Get recent fills for the product
+            fills = self.client.get_fills(order_ids=[order_id])
+            if fills and fills.get('fills'):
+                for fill in fills['fills']:
+                    if fill['order_id'] == order_id:
+                        return {
+                            'filled': True,
+                            'filled_size': float(fill['size']),
+                            'filled_price': float(fill['price'])
+                        }
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+        except Exception as e:
+            logging.error(f"Error checking fills for order {order_id}: {str(e)}")
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+
+    def order_status_checker(self):
+        check_interval = 5  # Check orders every 5 seconds
+        last_check_time = time.time()
+        last_log_time = time.time()
+        log_interval = 30  # Log summary every 30 seconds
+
+        while self.is_running:
+            try:
+                # Wait for a new order or until it's time to check again
+                try:
+                    order = self.order_queue.get(timeout=check_interval)
+                    if order is None:
+                        break
+                except Empty:
+                    order = None
+
+                current_time = time.time()
+                if current_time - last_check_time >= check_interval or order:
+                    last_check_time = current_time
+                    
+                    # Check all orders in the queue
+                    orders_to_recheck = []
+                    newly_filled_orders = 0
+                    while not self.order_queue.empty() or order:
+                        if order is None:
+                            order = self.order_queue.get_nowait()
+                        
+                        if order['order_id']:  # Only check orders with valid IDs
+                            filled_info = self.check_order_filled(order['order_id'])
+                            if filled_info['filled']:
+                                with self.order_lock:
+                                    self.filled_orders.append({
+                                        'order_id': order['order_id'],
+                                        'filled_size': filled_info['filled_size'],
+                                        'filled_price': filled_info['filled_price']
+                                    })
+                                newly_filled_orders += 1
+                            else:
+                                orders_to_recheck.append(order)
+                        else:
+                            logging.warning(f"Skipping check for order with empty ID. Order details: {order}")
+                        
+                        order = None
+
+                    # Put unfilled orders back in the queue
+                    for order in orders_to_recheck:
+                        self.order_queue.put(order)
+
+                    # Log a summary if the log interval has passed or if any orders were filled
+                    if current_time - last_log_time >= log_interval or newly_filled_orders > 0:
+                        last_log_time = current_time
+                        total_filled, total_value_filled, _ = self.update_order_stats()
+                        logging.info(f"Order status summary: {len(orders_to_recheck)} unfilled, "
+                                     f"{len(self.filled_orders)} filled, {len(self.failed_orders)} failed. "
+                                     f"Total filled: {total_filled:.8f}, "
+                                     f"Total value filled: ${total_value_filled:.2f}")
+
+            except Exception as e:
+                logging.error(f"Error in order status checker: {str(e)}")
+
+    def display_twap_progress(self, current_slice, total_slices, orders_placed, orders_filled, total_placed, total_filled, total_value_placed, total_value_filled):
         print("\n" + "=" * 50)
         print(f"TWAP Progress: Slice {current_slice}/{total_slices}")
         print(f"Orders Placed: {orders_placed}")
         print(f"Orders Filled: {orders_filled}")
-        print(f"Total Executed: {total_executed:.8f}")
-        print(f"Total Value Executed: ${total_value_executed:.2f}")
-        if total_executed > 0:
-            avg_fill_price = total_value_executed / total_executed
+        print(f"Total Quantity Placed: {total_placed:.8f}")
+        print(f"Total Quantity Filled: {total_filled:.8f}")
+        print(f"Total Value Placed: ${total_value_placed:.2f}")
+        print(f"Total Value Filled: ${total_value_filled:.2f}")
+        if total_filled > 0:
+            avg_fill_price = total_value_filled / total_filled
             print(f"Average Fill Price: ${avg_fill_price:.2f}")
         print("=" * 50)
 
-    def display_twap_summary(self, orders_placed, orders_filled, total_executed, total_value_executed):
-        """
-        Display the summary of the TWAP order execution.
-        """
+    def display_twap_summary(self, orders_placed, orders_filled, total_placed, total_filled, total_value_placed, total_value_filled):
         print("\n" + "=" * 50)
         print("TWAP Order Execution Summary")
         print(f"Total Orders Placed: {orders_placed}")
         print(f"Total Orders Filled: {orders_filled}")
-        print(f"Total Quantity Executed: {total_executed:.8f}")
-        print(f"Total USD Value Executed: ${total_value_executed:.2f}")
-        if total_executed > 0:
-            avg_fill_price = total_value_executed / total_executed
+        print(f"Total Quantity Placed: {total_placed:.8f}")
+        print(f"Total Quantity Filled: {total_filled:.8f}")
+        print(f"Total USD Value Placed: ${total_value_placed:.2f}")
+        print(f"Total USD Value Filled: ${total_value_filled:.2f}")
+        if total_filled > 0:
+            avg_fill_price = total_value_filled / total_filled
             print(f"Average Fill Price: ${avg_fill_price:.2f}")
         print("=" * 50)
 
         logging.info(f"TWAP order execution completed. Orders Placed: {orders_placed}, "
-                     f"Orders Filled: {orders_filled}, Total Executed: {total_executed:.8f}, "
-                     f"Total USD Value: ${total_value_executed:.2f}")
+                     f"Orders Filled: {orders_filled}, Total Placed: {total_placed:.8f}, "
+                     f"Total Filled: {total_filled:.8f}, Total USD Value Placed: ${total_value_placed:.2f}, "
+                     f"Total USD Value Filled: ${total_value_filled:.2f}")
 
     def place_adaptive_twap_order(self):
         """
@@ -792,37 +910,37 @@ class TradingTerminal:
             print(f"Error managing orders: {str(e)}")
 
     def run(self):
-        """
-        Run the main loop of the trading terminal.
-        """
         self.login()
-        while True:
-            print("\nWhat would you like to do?")
-            print("1. View portfolio balances")
-            print("2. Place a limit order")
-            print("3. Place a TWAP order")
-            print("4. Place an Adaptive TWAP order")
-            print("5. Show and cancel active orders")
-            print("6. Exit")
-            
-            choice = input("Enter your choice (1-6): ")
-            
-            if choice == '1':
-                self.view_portfolio()
-            elif choice == '2':
-                self.place_limit_order()
-            elif choice == '3':
-                self.place_twap_order()
-            elif choice == '4':
-                self.place_adaptive_twap_order()
-            elif choice == '5':
-                self.show_and_cancel_orders()
-            elif choice == '6':
-                logging.info("User exited the trading terminal")
-                print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
-                break
-            else:
-                print("Invalid choice. Please try again.")
+        try:
+            while True:
+                print("\nWhat would you like to do?")
+                print("1. View portfolio balances")
+                print("2. Place a limit order")
+                print("3. Place a TWAP order")
+                print("4. Place an Adaptive TWAP order")
+                print("5. Show and cancel active orders")
+                print("6. Exit")
+                
+                choice = input("Enter your choice (1-6): ")
+                
+                if choice == '1':
+                    self.view_portfolio()
+                elif choice == '2':
+                    self.place_limit_order()
+                elif choice == '3':
+                    self.place_twap_order()
+                elif choice == '4':
+                    self.place_adaptive_twap_order()
+                elif choice == '5':
+                    self.show_and_cancel_orders()
+                elif choice == '6':
+                    logging.info("User exited the trading terminal")
+                    print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
+                    break
+                else:
+                    print("Invalid choice. Please try again.")
+        finally:
+            self.stop_checker_thread()  # Ensure the checker thread is stopped when exiting
 
 def main():
     terminal = TradingTerminal()
