@@ -3,6 +3,7 @@ from keys import Keys
 from coinbase.rest import RESTClient
 import time
 import random
+import threading
 from threading import Lock
 from threading import Thread
 from queue import Queue, Empty
@@ -13,7 +14,7 @@ from collections import defaultdict
 import uuid
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configurable parameters
 CONFIG = {
@@ -91,8 +92,14 @@ class TradingTerminal:
             'BTC-USDC': 2,
             # Add more pairs as needed
         }
-        self.twap_orders = {}  # Dictionary to store TWAP order information
-        self.order_to_twap_map = {}  # Map individual order IDs to TWAP IDs
+        self.twap_orders = {}
+        self.order_to_twap_map = {}
+        self.order_queue = Queue()
+        self.checker_thread = None
+        self.is_running = False
+        self.account_cache = {}
+        self.account_cache_time = 0
+        self.account_cache_ttl = 60  # Cache TTL in seconds
 
     def round_price(self, price, product_id):
         precision = self.price_precision.get(product_id, 2)  # Default to 2 if not specified
@@ -220,6 +227,48 @@ class TradingTerminal:
             return []
 
     # User interaction methods
+
+    def get_accounts(self, force_refresh=False):
+        current_time = time.time()
+        if force_refresh or not self.account_cache or (current_time - self.account_cache_time) > self.account_cache_ttl:
+            try:
+                logging.info("Fetching fresh account data from API")
+                all_accounts = []
+                cursor = None
+                while True:
+                    self.rate_limiter.wait()  # Respect rate limits
+                    accounts_data = self.client.get_accounts(cursor=cursor, limit=250)
+                    accounts = accounts_data.get('accounts', [])
+                    all_accounts.extend(accounts)
+                    logging.info(f"Retrieved {len(accounts)} accounts in this batch")
+                    logging.debug(f"Accounts in this batch: {[acc['currency'] for acc in accounts]}")
+                    
+                    cursor = accounts_data.get('cursor')
+                    if not cursor or not accounts:
+                        break
+
+                self.account_cache = {account['currency']: account for account in all_accounts}
+                self.account_cache_time = current_time
+                logging.info(f"Retrieved a total of {len(self.account_cache)} accounts")
+                logging.debug(f"All account currencies: {list(self.account_cache.keys())}")
+            except Exception as e:
+                logging.error(f"Error fetching accounts: {str(e)}")
+                return {}
+        else:
+            logging.info("Using cached account data")
+        return self.account_cache
+
+    def get_account_balance(self, currency):
+        logging.debug(f"get_account_balance called for currency: {currency}")
+        accounts = self.get_accounts()
+        account = accounts.get(currency)
+        if account:
+            balance = float(account['available_balance']['value'])
+            logging.info(f"Retrieved balance for {currency}: {balance}")
+            return balance
+        logging.warning(f"No account found for currency: {currency}")
+        return 0
+
     def get_order_input(self):
         """
         Get order input from user.
@@ -255,6 +304,29 @@ class TradingTerminal:
             if side in ['BUY', 'SELL']:
                 break
             print("Please enter either 'Buy' or 'Sell'.")
+
+        # Display relevant balance information
+        base_currency, quote_currency = product_id.split('-')
+        if side == 'SELL':
+            balance = self.get_account_balance(base_currency)
+            logging.info(f"Sell order - {base_currency} balance: {balance}")
+            try:
+                current_price = float(self.get_product(product_id)['price'])
+                usd_value = balance * current_price
+                print(f"\nCurrent {base_currency} balance: {balance:.8f} (${usd_value:.2f})")
+            except Exception as e:
+                logging.error(f"Error fetching current price for {product_id}: {str(e)}")
+                print(f"\nCurrent {base_currency} balance: {balance:.8f}")
+        else:  # BUY
+            balance = self.get_account_balance(quote_currency)
+            logging.info(f"Buy order - {quote_currency} balance: {balance}")
+            try:
+                current_price = float(self.get_product(product_id)['price'])
+                equivalent_base = balance / current_price if current_price > 0 else 0
+                print(f"\nCurrent {quote_currency} balance: {balance:.2f} (equivalent to {equivalent_base:.8f} {base_currency})")
+            except Exception as e:
+                logging.error(f"Error fetching current price for {product_id}: {str(e)}")
+                print(f"\nCurrent {quote_currency} balance: {balance:.2f}")
 
         while True:
             try:
@@ -322,7 +394,7 @@ class TradingTerminal:
             self.handle_order_error(str(e))
 
     def place_twap_order(self):
-        twap_id = str(uuid.uuid4())  # Generate a unique ID for this TWAP order
+        twap_id = str(uuid.uuid4())
         self.twap_orders[twap_id] = {
             'orders': [],
             'total_placed': 0,
@@ -330,7 +402,13 @@ class TradingTerminal:
             'total_value_placed': 0,
             'total_value_filled': 0,
             'start_time': time.time(),
-            'failed_slices': set()
+            'failed_slices': set(),
+            'status': 'active',
+            'market': '',
+            'side': '',
+            'total_fees': 0,
+            'maker_orders': 0,
+            'taker_orders': 0
         }
 
         if not self.client:
@@ -375,6 +453,15 @@ class TradingTerminal:
             logging.info("TWAP order cancelled by user")
             print("TWAP order cancelled.")
             return
+
+        # Update TWAP order with market and side information
+        self.twap_orders[twap_id]['market'] = order_input['product_id']
+        self.twap_orders[twap_id]['side'] = order_input['side']
+
+        # Start the checker thread
+        self.is_running = True
+        self.checker_thread = threading.Thread(target=self.order_status_checker)
+        self.checker_thread.start()
 
         total_placed = 0
         total_value_placed = 0
@@ -451,14 +538,28 @@ class TradingTerminal:
                     print(f"Waiting {sleep_time:.2f} seconds before next slice...")
                     time.sleep(sleep_time)
 
+            # Wait for a short period to allow final fills to be processed
+            time.sleep(10)
+
         except Exception as e:
             logging.error(f"Error during TWAP execution: {str(e)}")
             print(f"Error during TWAP execution: {str(e)}")
 
         finally:
-            # Wait for final fills and display summary
-            time.sleep(10)
-            self.display_twap_summary(twap_id)
+            # Stop the checker thread
+            self.is_running = False
+            self.order_queue.put(None)  # Signal the checker thread to stop
+            self.checker_thread.join()  # Wait for the checker thread to finish
+            self.checker_thread = None
+
+
+        # Update TWAP order status
+        self.twap_orders[twap_id]['status'] = 'completed'
+
+        # Display final summary
+        self.display_twap_summary(twap_id)
+        
+        return twap_id
 
     @retry_with_backoff(retries=3, backoff_in_seconds=1)
     def place_limit_order_with_retry(self, product_id, side, base_size, limit_price):
@@ -568,67 +669,26 @@ class TradingTerminal:
             return {'filled': False, 'filled_size': 0, 'filled_price': 0}
 
     def order_status_checker(self):
-        check_interval = 5  # Check orders every 5 seconds
-        last_check_time = time.time()
-        last_log_time = time.time()
-        log_interval = 30  # Log summary every 30 seconds
-
         while self.is_running:
             try:
-                # Wait for a new order or until it's time to check again
-                try:
-                    order = self.order_queue.get(timeout=check_interval)
-                    if order is None:
-                        break
-                except Empty:
-                    order = None
+                order = self.order_queue.get(timeout=1)
+                if order is None:
+                    break
 
-                current_time = time.time()
-                if current_time - last_check_time >= check_interval or order is not None:
-                    last_check_time = current_time
-                    
-                    # Check all orders in the queue
-                    orders_to_recheck = []
-                    newly_filled_orders = defaultdict(int)
-                    
-                    while True:
-                        if order is None:
-                            if self.order_queue.empty():
-                                break
-                            order = self.order_queue.get_nowait()
-
-                        if order.get('order_id'):  # Only check orders with valid IDs
-                            filled_info = self.check_order_filled(order['order_id'])
-                            if filled_info['filled']:
-                                twap_id = self.order_to_twap_map.get(order['order_id'])
-                                if twap_id:
-                                    with self.order_lock:
-                                        self.twap_orders[twap_id]['total_filled'] += filled_info['filled_size']
-                                        self.twap_orders[twap_id]['total_value_filled'] += filled_info['filled_size'] * filled_info['filled_price']
-                                    newly_filled_orders[twap_id] += 1
-                            else:
-                                orders_to_recheck.append(order)
-                        else:
-                            logging.warning(f"Skipping check for order with empty ID. Order details: {order}")
-                        
-                        order = None  # Reset order for next iteration
-
-                    # Put unfilled orders back in the queue
-                    for order in orders_to_recheck:
-                        self.order_queue.put(order)
-
-                    # Log a summary if the log interval has passed or if any orders were filled
-                    if current_time - last_log_time >= log_interval or newly_filled_orders:
-                        last_log_time = current_time
-                        for twap_id, filled_count in newly_filled_orders.items():
-                            twap_info = self.twap_orders[twap_id]
-                            logging.info(f"TWAP {twap_id} update: {filled_count} new fills. "
-                                         f"Total filled: {twap_info['total_filled']:.8f}, "
-                                         f"Total value filled: ${twap_info['total_value_filled']:.2f}")
-
+                if order.get('order_id'):
+                    filled_info = self.check_order_filled(order['order_id'])
+                    if filled_info['filled']:
+                        twap_id = self.order_to_twap_map.get(order['order_id'])
+                        if twap_id:
+                            with threading.Lock():
+                                self.twap_orders[twap_id]['total_filled'] += filled_info['filled_size']
+                                self.twap_orders[twap_id]['total_value_filled'] += filled_info['filled_size'] * filled_info['filled_price']
+                    else:
+                        self.order_queue.put(order)  # Put unfilled orders back in the queue
+            except Empty:
+                continue
             except Exception as e:
                 logging.error(f"Error in order status checker: {str(e)}")
-                logging.exception("Exception details:")  # This will log the full traceback
 
     def display_twap_progress(self, twap_id, current_slice, total_slices):
         twap_info = self.twap_orders[twap_id]
@@ -648,23 +708,114 @@ class TradingTerminal:
         twap_info = self.twap_orders[twap_id]
         print("\n" + "=" * 50)
         print("TWAP Order Execution Summary")
+        print(f"TWAP ID: {twap_id}")
+        print(f"Market: {twap_info['market']}")
+        print(f"Side: {twap_info['side']}")
         print(f"Total Orders Placed: {len(twap_info['orders'])}")
         print(f"Total Quantity Placed: {twap_info['total_placed']:.8f}")
-        print(f"Total Quantity Filled: {twap_info['total_filled']:.8f}")
         print(f"Total USD Value Placed: ${twap_info['total_value_placed']:.2f}")
+        print(f"Total Quantity Filled: {twap_info['total_filled']:.8f}")
         print(f"Total USD Value Filled: ${twap_info['total_value_filled']:.2f}")
         if twap_info['total_filled'] > 0:
             avg_fill_price = twap_info['total_value_filled'] / twap_info['total_filled']
             print(f"Average Fill Price: ${avg_fill_price:.2f}")
+        print(f"Total Fees: ${twap_info['total_fees']:.2f}")
+        if twap_info['total_value_filled'] > 0:
+            fee_percentage = (twap_info['total_fees'] / twap_info['total_value_filled']) * 100
+            print(f"Fee Percentage: {fee_percentage:.2f}%")
+        total_orders = len(twap_info['orders'])
+        if total_orders > 0:
+            maker_percentage = (twap_info['maker_orders'] / total_orders) * 100
+            taker_percentage = (twap_info['taker_orders'] / total_orders) * 100
+            print(f"Maker Orders: {maker_percentage:.2f}%")
+            print(f"Taker Orders: {taker_percentage:.2f}%")
         print(f"Failed Slices: {len(twap_info['failed_slices'])}")
         print(f"Execution Time: {time.time() - twap_info['start_time']:.2f} seconds")
         print("=" * 50)
 
-        logging.info(f"TWAP order {twap_id} execution completed. "
-                     f"Orders Placed: {len(twap_info['orders'])}, "
-                     f"Total Placed: {twap_info['total_placed']:.8f}, "
-                     f"Total Filled: {twap_info['total_filled']:.8f}, "
-                     f"Total USD Value Filled: ${twap_info['total_value_filled']:.2f}")
+    def check_twap_order_fills(self, twap_id):
+        if twap_id not in self.twap_orders:
+            print(f"TWAP order {twap_id} not found.")
+            return
+
+        twap_info = self.twap_orders[twap_id]
+        order_data = []
+        
+        for order_id in twap_info['orders']:
+            filled_info = self.check_order_filled(order_id)
+            order_status = "Filled" if filled_info['filled'] else "Cancelled" if self.is_order_cancelled(order_id) else "Open"
+            
+            if filled_info['filled']:
+                with threading.Lock():
+                    new_fill_size = max(0, filled_info['filled_size'] - twap_info['total_filled'])
+                    if new_fill_size > 0:
+                        twap_info['total_filled'] += new_fill_size
+                        new_fill_value = new_fill_size * filled_info['filled_price']
+                        twap_info['total_value_filled'] += new_fill_value
+                        
+                        # Update fees and maker/taker status
+                        order_details = self.client.get_order(order_id)
+                        if 'order' in order_details and 'fill_fees' in order_details['order']:
+                            fees = float(order_details['order']['fill_fees'])
+                            twap_info['total_fees'] += fees
+                            if 'time_in_force' in order_details['order'] and order_details['order']['time_in_force'] == 'IOC':
+                                twap_info['taker_orders'] += 1
+                            else:
+                                twap_info['maker_orders'] += 1
+            
+            order_data.append([
+                order_id,
+                f"{filled_info['filled_size']:.8f}",
+                f"${filled_info['filled_size'] * filled_info['filled_price']:.2f}",
+                order_status
+            ])
+
+        print("\nTWAP Order Details:")
+        print(tabulate(order_data, headers=["Order ID", "Filled Size", "USD Value Filled", "Status"], tablefmt="grid"))
+
+        # Calculate and display summary
+        if twap_info['total_value_placed'] > 0:
+            fill_percentage = (twap_info['total_value_filled'] / twap_info['total_value_placed']) * 100
+            print(f"\nTotal Percentage Value Filled: {fill_percentage:.2f}%")
+        
+        self.display_twap_summary(twap_id)
+
+    def display_all_twap_orders(self):
+        table_data = []
+        for index, (twap_id, twap_info) in enumerate(self.twap_orders.items(), start=1):
+            status = self.get_twap_status(twap_id)
+            table_data.append([
+                index,
+                twap_id,
+                twap_info['market'],
+                twap_info['side'],
+                f"{twap_info['total_placed']:.8f}",
+                f"${twap_info['total_value_placed']:.2f}",
+                f"{twap_info['total_filled']:.8f}",
+                f"${twap_info['total_value_filled']:.2f}",
+                status
+            ])
+        
+        print("\nAll TWAP Orders:")
+        print(tabulate(table_data, headers=["Number", "TWAP ID", "Market", "Side", "Total Placed", "USD Value Placed", "Total Filled", "USD Value Filled", "Status"], tablefmt="grid"))
+
+    def get_twap_status(self, twap_id):
+        twap_info = self.twap_orders[twap_id]
+        all_orders_complete = all(self.check_order_filled(order_id)['filled'] or self.is_order_cancelled(order_id) for order_id in twap_info['orders'])
+        if all_orders_complete:
+            return "Complete"
+        elif twap_info['total_filled'] > 0:
+            return "Partially Filled"
+        else:
+            return "Active"
+
+    def is_order_cancelled(self, order_id):
+        try:
+            order_details = self.client.get_order(order_id)
+            return order_details['order']['status'] == 'CANCELLED'
+        except Exception as e:
+            logging.error(f"Error checking if order {order_id} is cancelled: {str(e)}")
+            return False
 
     def place_adaptive_twap_order(self):
         """
@@ -794,7 +945,7 @@ class TradingTerminal:
         try:
             logging.info("Fetching accounts for portfolio view")
             print("\nFetching accounts (this may take a moment due to rate limiting):")
-            accounts = self.rate_limited_get_accounts(limit=100)
+            accounts = self.get_accounts(force_refresh=True)  # Force a refresh of account data
             self.display_portfolio(accounts)
         except Exception as e:
             logging.error(f"Error fetching portfolio: {str(e)}")
@@ -807,15 +958,16 @@ class TradingTerminal:
         portfolio_data = []
         total_usd_value = 0
 
-        for account in accounts_data.get('accounts', []):
+        for currency, account in accounts_data.items():
             balance = float(account['available_balance']['value'])
-            currency = account['currency']
+            logging.info(f"Processing {currency} balance: {balance}")
             
             if balance > 0:
                 if currency in ['USD', 'USDC', 'USDT', 'DAI']:
                     usd_value = balance
                 else:
                     try:
+                        self.rate_limiter.wait()  # Respect rate limits
                         product_id = f"{currency}-USD"
                         ticker = self.get_product(product_id)
                         usd_price = float(ticker['price'])
@@ -828,6 +980,7 @@ class TradingTerminal:
                 if usd_value >= 1:  # Only include assets worth $1 or more
                     portfolio_data.append([currency, balance, usd_value])
                     total_usd_value += usd_value
+                    logging.info(f"Added {currency} to portfolio: Balance={balance}, USD Value=${usd_value:.2f}")
 
         # Sort portfolio data by USD value in descending order
         portfolio_data.sort(key=lambda x: x[2], reverse=True)
@@ -933,36 +1086,43 @@ class TradingTerminal:
 
     def run(self):
         self.login()
-        try:
-            while True:
-                print("\nWhat would you like to do?")
-                print("1. View portfolio balances")
-                print("2. Place a limit order")
-                print("3. Place a TWAP order")
-                print("4. Place an Adaptive TWAP order")
-                print("5. Show and cancel active orders")
-                print("6. Exit")
-                
-                choice = input("Enter your choice (1-6): ")
-                
-                if choice == '1':
-                    self.view_portfolio()
-                elif choice == '2':
-                    self.place_limit_order()
-                elif choice == '3':
-                    self.place_twap_order()
-                elif choice == '4':
-                    self.place_adaptive_twap_order()
-                elif choice == '5':
-                    self.show_and_cancel_orders()
-                elif choice == '6':
-                    logging.info("User exited the trading terminal")
-                    print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
-                    break
-                else:
-                    print("Invalid choice. Please try again.")
-        finally:
-            self.stop_checker_thread()  # Ensure the checker thread is stopped when exiting
+        while True:
+            print("\nWhat would you like to do?")
+            print("1. View portfolio balances")
+            print("2. Place a limit order")
+            print("3. Place a TWAP order")
+            print("4. Check TWAP order fills")
+            print("5. Show and cancel active orders")
+            print("6. Exit")
+            
+            choice = input("Enter your choice (1-6): ")
+            
+            if choice == '1':
+                self.view_portfolio()
+            elif choice == '2':
+                self.place_limit_order()
+            elif choice == '3':
+                twap_id = self.place_twap_order()
+                print(f"TWAP order placed with ID: {twap_id}")
+            elif choice == '4':
+                self.display_all_twap_orders()
+                twap_number = input("Enter the number of the TWAP order to check: ")
+                try:
+                    twap_index = int(twap_number) - 1
+                    if 0 <= twap_index < len(self.twap_orders):
+                        twap_id = list(self.twap_orders.keys())[twap_index]
+                        self.check_twap_order_fills(twap_id)
+                    else:
+                        print("Invalid TWAP order number.")
+                except ValueError:
+                    print("Please enter a valid number.")
+            elif choice == '5':
+                self.show_and_cancel_orders()
+            elif choice == '6':
+                print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
+                break
+            else:
+                print("Invalid choice. Please try again.")
 
 def main():
     terminal = TradingTerminal()
