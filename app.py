@@ -103,148 +103,6 @@ class TradingTerminal:
         print("\nAsset Balances:")
         print(tabulate(table_data, headers=["Asset (Amount)", "USD Value"], tablefmt="grid"))
 
-    def get_top_markets(self):
-        try:
-            products = self.client.get_products()
-            
-            def get_usd_volume(product):
-                try:
-                    volume = float(product.get('volume_24h', '0'))
-                    price = float(product.get('price', '0'))
-                    return volume * price
-                except ValueError:
-                    return 0
-
-            # Sort products by USD volume and get top 10
-            top_products = sorted(products['products'], key=get_usd_volume, reverse=True)[:10]
-            return [(product['product_id'], get_usd_volume(product)) for product in top_products]
-        except Exception as e:
-            print(f"Error fetching top markets: {str(e)}")
-            return []
-
-    def get_available_markets(self):
-        try:
-            products = self.client.get_products()
-            return [product['product_id'] for product in products['products'] if product['status'] == 'online']
-        except Exception as e:
-            print(f"Error fetching available markets: {str(e)}")
-            return []
-
-    def get_active_orders(self):
-        try:
-            # Fetch orders without any filtering
-            all_orders = self.client.list_orders()
-            
-            # Filter for active orders
-            active_orders = [order for order in all_orders.get('orders', []) 
-                             if order['status'] in ['OPEN', 'PENDING']]
-            return active_orders
-        except Exception as e:
-            print(f"Error fetching orders: {str(e)}")
-            return []
-
-    def place_limit_order(self):
-        if not self.client:
-            print("Please login first.")
-            return
-
-        top_markets = self.get_top_markets()
-        if not top_markets:
-            print("Unable to fetch top markets. Please try again later.")
-            return
-
-        print("\nTop 10 Markets by 24h USD Volume:")
-        for i, (market, volume) in enumerate(top_markets, 1):
-            print(f"{i}. {market} (USD Volume: ${volume:,.2f})")
-        print("11. Enter a different market")
-
-        while True:
-            market_choice = input("Enter the number of the market you want to trade (1-11): ")
-            try:
-                choice = int(market_choice)
-                if 1 <= choice <= 10:
-                    product_id = top_markets[choice-1][0]
-                    break
-                elif choice == 11:
-                    product_id = input("Enter the market symbol (e.g., BTC-USD): ").upper()
-                    break
-                else:
-                    print("Invalid selection. Please choose a number between 1 and 11.")
-            except ValueError:
-                print("Please enter a valid number.")
-
-        while True:
-            side = input("Buy or Sell? ").upper()
-            if side in ['BUY', 'SELL']:
-                break
-            print("Please enter either 'Buy' or 'Sell'.")
-
-        while True:
-            try:
-                base_size = float(input("Enter the quantity: "))
-                break
-            except ValueError:
-                print("Please enter a valid number for the quantity.")
-
-        while True:
-            try:
-                limit_price = float(input("Enter the limit price: "))
-                break
-            except ValueError:
-                print("Please enter a valid number for the limit price.")
-
-        usd_value = base_size * limit_price
-
-        print("\nOrder Summary:")
-        print(f"Market: {product_id}")
-        print(f"Side: {side}")
-        print(f"Quantity: {base_size}")
-        print(f"Limit Price: ${limit_price:,.2f}")
-        print(f"Total USD Value: ${usd_value:,.2f}")
-
-        confirm = input("\nDo you want to place this order? (yes/no): ").lower()
-        if confirm != 'yes':
-            print("Order cancelled.")
-            return
-
-        try:
-            order_response = self.client.limit_order_gtc(
-                client_order_id=f"limit-order-{int(time.time())}",
-                product_id=product_id,
-                side=side,
-                base_size=str(base_size),
-                limit_price=str(limit_price)
-            )
-
-            if 'order_id' in order_response:
-                print(f"Limit order placed successfully. Order ID: {order_response['order_id']}")
-                print(f"Order USD Value: ${usd_value:,.2f}")
-            else:
-                print("Order placement failed. No order ID received.")
-                if 'error_response' in order_response:
-                    error_details = order_response['error_response']
-                    print(f"Error details: {error_details}")
-                else:
-                    print("No specific error details available.")
-
-            # Verify order placement
-            time.sleep(2)  # Wait a bit for the order to be processed
-            active_orders = self.get_active_orders()
-            if any(order['order_id'] == order_response.get('order_id') for order in active_orders):
-                print("Order verified in active orders list.")
-            else:
-                print("Warning: Order not found in active orders list. It may have failed or been immediately filled.")
-
-        except Exception as e:
-            error_message = str(e)
-            print(f"Error occurred while placing the order: {error_message}")
-            if "INSUFFICIENT_FUND" in error_message:
-                print("This may be due to insufficient funds.")
-            elif "INVALID_SIZE" in error_message:
-                print("This may be due to an invalid order size. The size might be too small or exceed your available balance.")
-            elif "INVALID_PRICE" in error_message:
-                print("This may be due to an invalid price. The price might be outside the allowed range for this product.")
-
     def show_and_cancel_orders(self):
         if not self.client:
             print("Please login first.")
@@ -327,139 +185,294 @@ class TradingTerminal:
         except Exception as e:
             print(f"Error managing orders: {str(e)}")
 
-    def adaptive_twap(self):
-        if not self.client:
-            print("Please login first.")
-            return
 
-        product_id = input("Enter the market (e.g., BTC-USD): ")
-        side = input("Buy or Sell? ").upper()
-        total_quantity = float(input("Enter the total quantity: "))
-        target_price = float(input("Enter the target price: "))
-        duration = int(input("Enter TWAP duration in seconds: "))
-        slices = int(input("Enter number of slices for TWAP: "))
-
-        print("\nAdaptive TWAP Order Summary:")
-        print(f"Market: {product_id}")
-        print(f"Side: {side}")
-        print(f"Total Quantity: {total_quantity}")
-        print(f"Target Price: ${target_price}")
-        print(f"Duration: {duration} seconds")
-        print(f"Number of Slices: {slices}")
-
-        confirm = input("\nDo you want to execute this Adaptive TWAP order? (yes/no): ").lower()
-        if confirm != 'yes':
-            print("Adaptive TWAP order cancelled.")
-            return
-
-        slice_duration = duration / slices
-        executed_quantity = 0
-        start_time = time.time()
-
-        for i in range(slices):
-            current_price = float(self.client.get_product(product_id)['price'])
+    def get_top_markets(self):
+        try:
+            products = self.client.get_products()
             
-            # Adjust slice size based on price difference
-            price_difference = abs(current_price - target_price) / target_price
-            adjusted_slice_size = (total_quantity / slices) * (1 + price_difference)
+            def get_usd_volume(product):
+                try:
+                    volume = float(product.get('volume_24h', '0'))
+                    price = float(product.get('price', '0'))
+                    return volume * price
+                except ValueError:
+                    return 0
+
+            # Sort products by USD volume and get top 10
+            top_products = sorted(products['products'], key=get_usd_volume, reverse=True)[:10]
+            return [(product['product_id'], get_usd_volume(product)) for product in top_products]
+        except Exception as e:
+            print(f"Error fetching top markets: {str(e)}")
+            return []
+
+    def get_available_markets(self):
+        try:
+            products = self.client.get_products()
+            return [product['product_id'] for product in products['products'] if product['status'] == 'online']
+        except Exception as e:
+            print(f"Error fetching available markets: {str(e)}")
+            return []
+
+    def get_active_orders(self):
+        try:
+            # Fetch orders without any filtering
+            all_orders = self.client.list_orders()
             
-            if (side == 'BUY' and current_price < target_price) or \
-               (side == 'SELL' and current_price > target_price):
-                adjusted_slice_size *= 1.2  # Increase size if price is favorable
-            
-            adjusted_slice_size = min(adjusted_slice_size, total_quantity - executed_quantity)
-            
+            # Filter for active orders
+            active_orders = [order for order in all_orders.get('orders', []) 
+                             if order['status'] in ['OPEN', 'PENDING']]
+            return active_orders
+        except Exception as e:
+            print(f"Error fetching orders: {str(e)}")
+            return []
+        
+    
+    def get_order_input(self):
+        top_markets = self.get_top_markets()
+        if not top_markets:
+            print("Unable to fetch top markets. Please try again later.")
+            return None
+
+        print("\nTop 10 Markets by 24h USD Volume:")
+        for i, (market, volume) in enumerate(top_markets, 1):
+            print(f"{i}. {market} (USD Volume: ${volume:,.2f})")
+        print("11. Enter a different market")
+
+        while True:
+            market_choice = input("Enter the number of the market you want to trade (1-11): ")
             try:
-                order = self.client.market_order(
-                    client_order_id=f"adaptive-twap-{int(time.time())}",
-                    product_id=product_id,
-                    side=side,
-                    base_size=str(adjusted_slice_size)
-                )
-                print(f"Executed slice {i+1}/{slices}: {adjusted_slice_size} at price {current_price}")
-                executed_quantity += adjusted_slice_size
-            except Exception as e:
-                print(f"Error executing slice {i+1}: {str(e)}")
+                choice = int(market_choice)
+                if 1 <= choice <= 10:
+                    product_id = top_markets[choice-1][0]
+                    break
+                elif choice == 11:
+                    product_id = input("Enter the market symbol (e.g., BTC-USD): ").upper()
+                    break
+                else:
+                    print("Invalid selection. Please choose a number between 1 and 11.")
+            except ValueError:
+                print("Please enter a valid number.")
 
-            if i < slices - 1:
-                time.sleep(slice_duration - ((time.time() - start_time) % slice_duration))
+        while True:
+            side = input("Buy or Sell? ").upper()
+            if side in ['BUY', 'SELL']:
+                break
+            print("Please enter either 'Buy' or 'Sell'.")
 
-        print(f"Adaptive TWAP completed. Total executed: {executed_quantity}")
+        while True:
+            try:
+                base_size = float(input("Enter the quantity: "))
+                break
+            except ValueError:
+                print("Please enter a valid number for the quantity.")
 
-    def twap(self):
+        while True:
+            try:
+                limit_price = float(input("Enter the limit price: "))
+                break
+            except ValueError:
+                print("Please enter a valid number for the limit price.")
+
+        usd_value = base_size * limit_price
+
+        print("\nOrder Summary:")
+        print(f"Market: {product_id}")
+        print(f"Side: {side}")
+        print(f"Quantity: {base_size}")
+        print(f"Limit Price: ${limit_price:,.2f}")
+        print(f"Total USD Value: ${usd_value:,.2f}")
+
+        confirm = input("\nDo you want to place this order? (yes/no): ").lower()
+        if confirm != 'yes':
+            print("Order cancelled.")
+            return None
+
+        return {
+            "product_id": product_id,
+            "side": side,
+            "base_size": base_size,
+            "limit_price": limit_price,
+            "usd_value": usd_value
+        }
+
+    def place_limit_order(self):
         if not self.client:
             print("Please login first.")
             return
 
-        product_id = input("Enter the market (e.g., BTC-USD): ")
-        side = input("Buy or Sell? ").upper()
-        total_quantity = float(input("Enter the total quantity: "))
-        limit_price = float(input("Enter the limit price: "))
-        duration = int(input("Enter TWAP duration in seconds: "))
-        slices = int(input("Enter number of slices for TWAP: "))
+        order_input = self.get_order_input()
+        if not order_input:
+            return
 
-        print("\nTWAP Order Summary:")
-        print(f"Market: {product_id}")
-        print(f"Side: {side}")
-        print(f"Total Quantity: {total_quantity}")
-        print(f"Limit Price: ${limit_price}")
-        print(f"Duration: {duration} seconds")
-        print(f"Number of Slices: {slices}")
+        try:
+            order_response = self.client.limit_order_gtc(
+                client_order_id=f"limit-order-{int(time.time())}",
+                product_id=order_input["product_id"],
+                side=order_input["side"],
+                base_size=str(order_input["base_size"]),
+                limit_price=str(order_input["limit_price"])
+            )
+
+            self.handle_order_response(order_response, order_input["usd_value"])
+
+        except Exception as e:
+            self.handle_order_error(str(e))
+
+    def place_twap_order(self):
+        if not self.client:
+            print("Please login first.")
+            return
+
+        order_input = self.get_order_input()
+        if not order_input:
+            return
+
+        duration = int(input("Enter TWAP duration in minutes: "))
+        num_slices = int(input("Enter number of slices for TWAP: "))
+
+        slice_size = order_input["base_size"] / num_slices
+        slice_interval = duration * 60 / num_slices
+
+        print(f"\nTWAP Order Details:")
+        print(f"Market: {order_input['product_id']}")
+        print(f"Side: {order_input['side']}")
+        print(f"Total Quantity: {order_input['base_size']}")
+        print(f"Limit Price: ${order_input['limit_price']:,.2f}")
+        print(f"Total USD Value: ${order_input['usd_value']:,.2f}")
+        print(f"Duration: {duration} minutes")
+        print(f"Number of Slices: {num_slices}")
+        print(f"Size per Slice: {slice_size}")
+        print(f"Interval between Slices: {slice_interval:.2f} seconds")
 
         confirm = input("\nDo you want to execute this TWAP order? (yes/no): ").lower()
         if confirm != 'yes':
             print("TWAP order cancelled.")
             return
 
-        slice_duration = duration / slices
-        slice_quantity = total_quantity / slices
+        total_executed = 0
+        for i in range(num_slices):
+            try:
+                order_response = self.client.limit_order_gtc(
+                    client_order_id=f"twap-order-{int(time.time())}-{i}",
+                    product_id=order_input["product_id"],
+                    side=order_input["side"],
+                    base_size=str(slice_size),
+                    limit_price=str(order_input["limit_price"])
+                )
+                if 'order_id' in order_response:
+                    print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_response['order_id']}")
+                    total_executed += slice_size
+                else:
+                    print(f"Failed to place TWAP slice {i+1}/{num_slices}.")
+                    if 'error_response' in order_response:
+                        print(f"Error details: {order_response['error_response']}")
+                
+                if i < num_slices - 1:
+                    print(f"Waiting {slice_interval:.2f} seconds before next slice...")
+                    time.sleep(slice_interval)
+            except Exception as e:
+                print(f"Error placing TWAP slice {i+1}: {str(e)}")
+
+        print(f"TWAP order execution completed. Total quantity executed: {total_executed}")
+        print(f"Total USD Value executed: ${total_executed * order_input['limit_price']:,.2f}")
+
+    def place_adaptive_twap_order(self):
+        if not self.client:
+            print("Please login first.")
+            return
+
+        order_input = self.get_order_input()
+        if not order_input:
+            return
+
+        duration = int(input("Enter Adaptive TWAP duration in minutes: "))
+        num_slices = int(input("Enter number of slices for Adaptive TWAP: "))
+
+        slice_size = order_input["base_size"] / num_slices
+        slice_interval = duration * 60 / num_slices
+
+        print(f"\nAdaptive TWAP Order Details:")
+        print(f"Duration: {duration} minutes")
+        print(f"Number of Slices: {num_slices}")
+        print(f"Initial Size per Slice: {slice_size}")
+        print(f"Interval between Slices: {slice_interval} seconds")
+
+        confirm = input("\nDo you want to execute this Adaptive TWAP order? (yes/no): ").lower()
+        if confirm != 'yes':
+            print("Adaptive TWAP order cancelled.")
+            return
+
         executed_quantity = 0
         start_time = time.time()
 
-        for i in range(slices):
+        for i in range(num_slices):
+            current_price = float(self.client.get_product(order_input["product_id"])['price'])
+            
+            # Adjust slice size based on price difference
+            price_difference = abs(current_price - order_input["limit_price"]) / order_input["limit_price"]
+            adjusted_slice_size = slice_size * (1 + price_difference)
+            
+            if (order_input["side"] == 'BUY' and current_price < order_input["limit_price"]) or \
+               (order_input["side"] == 'SELL' and current_price > order_input["limit_price"]):
+                adjusted_slice_size *= 1.2  # Increase size if price is favorable
+            
+            adjusted_slice_size = min(adjusted_slice_size, order_input["base_size"] - executed_quantity)
+            
             try:
-                order = self.client.limit_order_gtc(
-                    client_order_id=f"twap-limit-{int(time.time())}",
-                    product_id=product_id,
-                    side=side,
-                    base_size=str(slice_quantity),
-                    limit_price=str(limit_price)
+                order_response = self.client.market_order(
+                    client_order_id=f"adaptive-twap-{int(time.time())}-{i}",
+                    product_id=order_input["product_id"],
+                    side=order_input["side"],
+                    base_size=str(adjusted_slice_size)
                 )
-                print(f"Placed limit order for slice {i+1}/{slices}: {slice_quantity} at price {limit_price}")
-                
-                # Wait for the order to fill or the slice duration to pass
-                slice_end_time = start_time + (i + 1) * slice_duration
-                while time.time() < slice_end_time:
-                    order_status = self.client.get_order(order['order_id'])
-                    if order_status['status'] == 'FILLED':
-                        print(f"Slice {i+1} order filled")
-                        executed_quantity += float(order_status['filled_size'])
-                        break
-                    time.sleep(5)  # Check every 5 seconds
-
-                # Cancel the order if it's not fully filled
-                if order_status['status'] != 'FILLED':
-                    self.client.cancel_orders([order['order_id']])
-                    print(f"Cancelled unfilled portion of slice {i+1}")
-                    executed_quantity += float(order_status['filled_size'])
-
+                print(f"Adaptive TWAP slice {i+1}/{num_slices} executed. Size: {adjusted_slice_size}, Price: {current_price}")
+                executed_quantity += adjusted_slice_size
             except Exception as e:
-                print(f"Error executing slice {i+1}: {str(e)}")
+                print(f"Error executing Adaptive TWAP slice {i+1}: {str(e)}")
 
-            if i < slices - 1:
-                time.sleep(slice_duration - ((time.time() - start_time) % slice_duration))
+            if i < num_slices - 1:
+                time.sleep(slice_interval - ((time.time() - start_time) % slice_interval))
 
-        print(f"TWAP completed. Total executed: {executed_quantity}")
+        print(f"Adaptive TWAP order execution completed. Total executed: {executed_quantity}")
 
+    def handle_order_response(self, order_response, usd_value):
+        if 'order_id' in order_response:
+            print(f"Order placed successfully. Order ID: {order_response['order_id']}")
+            print(f"Order USD Value: ${usd_value:,.2f}")
+        else:
+            print("Order placement failed. No order ID received.")
+            if 'error_response' in order_response:
+                error_details = order_response['error_response']
+                print(f"Error details: {error_details}")
+            else:
+                print("No specific error details available.")
+
+        # Verify order placement
+        time.sleep(2)  # Wait a bit for the order to be processed
+        active_orders = self.get_active_orders()
+        if any(order['order_id'] == order_response.get('order_id') for order in active_orders):
+            print("Order verified in active orders list.")
+        else:
+            print("Warning: Order not found in active orders list. It may have failed or been immediately filled.")
+
+    def handle_order_error(self, error_message):
+        print(f"Error occurred while placing the order: {error_message}")
+        if "INSUFFICIENT_FUND" in error_message:
+            print("This may be due to insufficient funds.")
+        elif "INVALID_SIZE" in error_message:
+            print("This may be due to an invalid order size. The size might be too small or exceed your available balance.")
+        elif "INVALID_PRICE" in error_message:
+            print("This may be due to an invalid price. The price might be outside the allowed range for this product.")
+  
     def run(self):
         self.login()
         while True:
             print("\nWhat would you like to do?")
             print("1. View portfolio balances")
             print("2. Place a limit order")
-            print("3. Show and cancel active orders")
+            print("3. Place a TWAP order")
             print("4. Place an Adaptive TWAP order")
-            print("5. Place a TWAP order")
+            print("5. Show and cancel active orders")
             print("6. Exit")
             
             choice = input("Enter your choice (1-6): ")
@@ -469,11 +482,11 @@ class TradingTerminal:
             elif choice == '2':
                 self.place_limit_order()
             elif choice == '3':
-                self.show_and_cancel_orders()
+                self.place_twap_order()
             elif choice == '4':
-                self.adaptive_twap()
+                self.place_adaptive_twap_order()
             elif choice == '5':
-                self.twap()
+                self.show_and_cancel_orders()
             elif choice == '6':
                 print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
                 break
