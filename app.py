@@ -294,11 +294,11 @@ class TradingTerminal:
             logging.error(f"Error checking fills batch: {str(e)}")
             return {}
 
-    def get_top_markets(self, limit=10):
+    def get_top_markets(self, limit=20):
         """Get top markets by 24h USD volume.
         
         Args:
-            limit (int): Number of top markets to return. Defaults to 10.
+            limit (int): Number of top markets to return. Defaults to 20.
         """
         try:
             products_response = self.client.get_products()
@@ -306,18 +306,51 @@ class TradingTerminal:
             
             def get_usd_volume(product):
                 try:
-                    volume = float(product['volume_24h'])  # Direct dictionary access
-                    price = float(product['price'])  # Direct dictionary access
+                    volume = float(product['volume_24h'])
+                    price = float(product['price'])
                     return volume * price
                 except (KeyError, ValueError):
                     return 0
 
+            # Sort products by USD volume
             top_products = sorted(products, key=get_usd_volume, reverse=True)[:limit]
-            return [(product['product_id'], get_usd_volume(product)) for product in top_products]
+
+            # Format products into rows and columns
+            NUM_COLUMNS = 4
+            rows = []
+            current_row = []
             
+            for i, product in enumerate(top_products, 1):
+                volume = get_usd_volume(product)
+                volume_millions = volume / 1_000_000
+                market_info = [
+                    f"{i}.",
+                    product['product_id'],
+                    f"${volume_millions:.2f}M"
+                ]
+                current_row.extend(market_info)
+                
+                if i % NUM_COLUMNS == 0:
+                    rows.append(current_row)
+                    current_row = []
+            
+            # Add any remaining items in the last row
+            if current_row:
+                # Pad the last row with empty strings to maintain alignment
+                while len(current_row) < NUM_COLUMNS * 3:  # 3 columns per market (number, id, volume)
+                    current_row.extend(['', '', ''])
+                rows.append(current_row)
+
+            # Create headers for each column
+            headers = []
+            for i in range(NUM_COLUMNS):
+                headers.extend(['#', 'Market', 'Volume'])
+
+            return rows, headers
+
         except Exception as e:
             logging.error(f"Error fetching top markets: {str(e)}")
-            return []
+            return [], []
 
     def place_limit_order(self):
         """Place a limit order with user input."""
@@ -330,33 +363,27 @@ class TradingTerminal:
         
         # Get product ID using top markets
         try:
-            top_markets = self.get_top_markets(20)  # Changed to show top 20 markets
+            rows, headers = self.get_top_markets(20)  # Get top 20 markets
             
-            if not top_markets:
+            if not rows:
                 logging.error("Failed to fetch top markets")
                 print("Error fetching market data. Please try again.")
                 return
                 
-            print("\nTop 20 Markets by 24h Volume:")
-            print("--------------------------------")
-            market_data = []
-            for i, (product_id, volume) in enumerate(top_markets, 1):
-                volume_millions = volume / 1_000_000  # Convert to millions
-                market_data.append([
-                    f"{i}.", 
-                    product_id, 
-                    f"${volume_millions:.2f}M"
-                ])
-            
-            # Use tabulate for better formatting
-            print(tabulate(market_data, headers=["#", "Market", "24h Volume"], tablefmt="simple"))
+            print("\nTop Markets by 24h Volume:")
+            print("=" * 120)  # Adjust width based on your terminal
+            print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
+            print("=" * 120)  # Matching bottom border
             
             while True:
                 product_choice = input("\nEnter the number of the market to trade (1-20): ")
                 try:
-                    index = int(product_choice) - 1
-                    if 0 <= index < len(top_markets):
-                        product_id = top_markets[index][0]
+                    index = int(product_choice)
+                    if 1 <= index <= 20:
+                        # Calculate the row and position within the row
+                        row_index = (index - 1) // 4
+                        col_index = ((index - 1) % 4) * 3 + 1  # Skip the number and get the product_id
+                        product_id = rows[row_index][col_index]
                         break
                     else:
                         print("Invalid selection. Please enter a number between 1 and 20.")
