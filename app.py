@@ -1,3 +1,4 @@
+import math
 import logging
 from keys import Keys
 from coinbase.rest import RESTClient
@@ -105,10 +106,17 @@ class TradingTerminal:
             self.order_lock = Lock()
             self.is_running = True
             
+            # Initialize twap_orders before starting the checker thread
+            logging.debug("Initializing TWAP tracking dictionaries")
+            self.twap_orders = {}
+            self.order_to_twap_map = {}
+            
             logging.debug("Starting checker thread")
             self.checker_thread = Thread(target=self.order_status_checker)
             self.checker_thread.daemon = True  # Make thread daemonic
+            logging.debug("Setting checker thread as daemon")
             self.checker_thread.start()
+            logging.debug("Checker thread started")
             
             logging.debug("Initializing caches")
             self.order_status_cache = {}
@@ -121,8 +129,6 @@ class TradingTerminal:
                 'ETH-USDC': {'price': 2, 'size': 8},
             }
             
-            self.twap_orders = {}
-            self.order_to_twap_map = {}
             self.account_cache = {}
             self.account_cache_time = 0
             self.account_cache_ttl = 60
@@ -135,7 +141,7 @@ class TradingTerminal:
         except Exception as e:
             logging.critical(f"Failed to initialize TradingTerminal: {str(e)}", exc_info=True)
             raise
-
+    
     def get_accounts(self, force_refresh=False):
         """Get account information with caching."""
         current_time = time.time()
@@ -387,135 +393,139 @@ class TradingTerminal:
             print("Please login first.")
             return
 
-        logging.info("Starting limit order placement")
+        logging.debug("Starting limit order placement")
         
-        # Get product ID using consolidated markets
         try:
+            # Get market data
+            logging.debug("Fetching market data")
             rows, headers, top_markets = self.get_consolidated_markets(20)
-        except Exception as e:
-            logging.error(f"Error fetching and processing market data: {str(e)}")
-            print("Error fetching market data. Please try again.")
-            return
             
-        if not rows:
-            logging.error("Failed to fetch top markets")
-            print("Error fetching market data. Please try again.")
-            return
+            if not rows:
+                logging.error("Failed to fetch top markets")
+                print("Error fetching market data. Please try again.")
+                return
+                
+            print("\nTop Markets by 24h Volume:")
+            print("=" * 120)
+            print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
+            print("=" * 120)
             
-        print("\nTop Markets by 24h Volume:")
-        print("=" * 120)
-        print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
-        print("=" * 120)
-        
-        # Get market selection
-        while True:
-            product_choice = input("\nEnter the number of the market to trade (1-20): ")
-            try:
-                index = int(product_choice)
-                if 1 <= index <= len(top_markets):
-                    base_currency, market_data = top_markets[index - 1]
-                    
-                    # Handle quote currency selection
-                    available_quotes = []
-                    if market_data['has_usd']:
-                        available_quotes.append('USD')
-                    if market_data['has_usdc']:
-                        available_quotes.append('USDC')
+            # Get market selection
+            logging.debug("Getting market selection")
+            while True:
+                product_choice = input("\nEnter the number of the market to trade (1-20): ")
+                logging.debug(f"User selected market number: {product_choice}")
+                try:
+                    index = int(product_choice)
+                    if 1 <= index <= len(top_markets):
+                        base_currency, market_data = top_markets[index - 1]
                         
-                    if len(available_quotes) > 1:
-                        print(f"\nAvailable quote currencies for {base_currency}:")
-                        for i, quote in enumerate(available_quotes, 1):
-                            print(f"{i}. {quote}")
+                        # Handle quote currency selection
+                        logging.debug(f"Processing quote currency selection for {base_currency}")
+                        available_quotes = []
+                        if market_data['has_usd']:
+                            available_quotes.append('USD')
+                        if market_data['has_usdc']:
+                            available_quotes.append('USDC')
                             
-                        while True:
-                            quote_choice = input(f"Select quote currency (1-{len(available_quotes)}): ")
-                            try:
-                                quote_index = int(quote_choice)
-                                if 1 <= quote_index <= len(available_quotes):
-                                    quote_currency = available_quotes[quote_index - 1]
-                                    break
-                                else:
-                                    print(f"Please enter a number between 1 and {len(available_quotes)}")
-                            except ValueError:
-                                print("Please enter a valid number")
-                    else:
-                        quote_currency = available_quotes[0]
-                    
-                    product_id = f"{base_currency}-{quote_currency}"
-                    if quote_currency == 'USD':
-                        product_id = market_data['usd_product']
-                    else:
-                        product_id = market_data['usdc_product']
+                        if len(available_quotes) > 1:
+                            print(f"\nAvailable quote currencies for {base_currency}:")
+                            for i, quote in enumerate(available_quotes, 1):
+                                print(f"{i}. {quote}")
+                                
+                            while True:
+                                quote_choice = input(f"Select quote currency (1-{len(available_quotes)}): ")
+                                logging.debug(f"User selected quote currency option: {quote_choice}")
+                                try:
+                                    quote_index = int(quote_choice)
+                                    if 1 <= quote_index <= len(available_quotes):
+                                        quote_currency = available_quotes[quote_index - 1]
+                                        break
+                                    else:
+                                        print(f"Please enter a number between 1 and {len(available_quotes)}")
+                                except ValueError:
+                                    print("Please enter a valid number")
+                        else:
+                            quote_currency = available_quotes[0]
                         
+                        product_id = f"{base_currency}-{quote_currency}"
+                        if quote_currency == 'USD':
+                            product_id = market_data['usd_product']
+                        else:
+                            product_id = market_data['usdc_product']
+                            
+                        logging.debug(f"Final product_id selected: {product_id}")
+                        break
+                    else:
+                        print("Invalid selection. Please enter a number between 1 and 20.")
+                except ValueError:
+                    print("Please enter a valid number.")
+
+            # Get side
+            while True:
+                side = input("\nEnter order side (buy/sell): ").upper()
+                logging.debug(f"User selected side: {side}")
+                if side in ['BUY', 'SELL']:
                     break
-                else:
-                    print("Invalid selection. Please enter a number between 1 and 20.")
-            except ValueError:
-                print("Please enter a valid number.")
+                print("Invalid side. Please enter 'buy' or 'sell'.")
 
-        # Get side (buy/sell)
-        while True:
-            side = input("\nEnter order side (buy/sell): ").upper()
-            if side in ['BUY', 'SELL']:
-                break
-            print("Invalid side. Please enter 'buy' or 'sell'.")
-
-        # Get current market prices
-        try:
+            # Get current prices
+            logging.debug(f"Fetching current prices for {product_id}")
             current_prices = self.get_current_prices(product_id)
             if current_prices:
                 print(f"\nCurrent market prices for {product_id}:")
                 print(f"Bid: ${current_prices['bid']:.2f}")
                 print(f"Ask: ${current_prices['ask']:.2f}")
                 print(f"Mid: ${current_prices['mid']:.2f}")
-        except Exception as e:
-            logging.error(f"Error fetching current prices: {str(e)}")
-            print("Unable to fetch current market prices.")
-            return
 
-        # Get limit price
-        while True:
-            try:
-                limit_price = float(input("\nEnter limit price: "))
-                if limit_price <= 0:
-                    print("Price must be greater than 0.")
-                    continue
-                break
-            except ValueError:
-                print("Please enter a valid number.")
+            # Get limit price
+            while True:
+                try:
+                    limit_price = float(input("\nEnter limit price: "))
+                    logging.debug(f"User entered limit price: {limit_price}")
+                    if limit_price <= 0:
+                        print("Price must be greater than 0.")
+                        continue
+                    break
+                except ValueError:
+                    print("Please enter a valid number.")
 
-        # Get order size
-        while True:
-            try:
-                base_size = float(input("\nEnter order size: "))
-                if base_size <= 0:
-                    print("Size must be greater than 0.")
-                    continue
-                break
-            except ValueError:
-                print("Please enter a valid number.")
+            # Get order size
+            while True:
+                try:
+                    base_size = float(input("\nEnter order size: "))
+                    logging.debug(f"User entered base size: {base_size}")
+                    if base_size <= 0:
+                        print("Size must be greater than 0.")
+                        continue
+                    break
+                except ValueError:
+                    print("Please enter a valid number.")
 
-        # Show order summary and confirm
-        print("\nOrder Summary:")
-        print(f"Product: {product_id}")
-        print(f"Side: {side}")
-        print(f"Size: {base_size}")
-        print(f"Limit Price: ${limit_price:.2f}")
+            # Show order summary
+            print("\nOrder Summary:")
+            print(f"Product: {product_id}")
+            print(f"Side: {side}")
+            print(f"Size: {base_size}")
+            print(f"Limit Price: ${limit_price:.2f}")
 
-        if side == "BUY":
-            total_cost = base_size * limit_price
-            print(f"Total Cost: ${total_cost:.2f}")
-        else:
-            total_value = base_size * limit_price
-            print(f"Total Value: ${total_value:.2f}")
+            if side == "BUY":
+                total_cost = base_size * limit_price
+                print(f"Total Cost: ${total_cost:.2f}")
+            else:
+                total_value = base_size * limit_price
+                print(f"Total Value: ${total_value:.2f}")
 
-        confirm = input("\nDo you want to place this order? (yes/no): ").lower()
-        if confirm != 'yes':
-            print("Order cancelled.")
-            return
+            confirm = input("\nDo you want to place this order? (yes/no): ").lower()
+            logging.debug(f"User confirmation: {confirm}")
+            
+            if confirm != 'yes':
+                logging.info("Order cancelled by user")
+                print("Order cancelled.")
+                return
 
-        # Place the order
-        try:
+            # Place the order
+            logging.debug("Placing limit order")
             order_response = self.place_limit_order_with_retry(
                 product_id=product_id,
                 side=side,
@@ -524,19 +534,43 @@ class TradingTerminal:
                 client_order_id=f"limit-{int(time.time())}"
             )
 
+            logging.debug(f"Order response received: {order_response}")
+
             if order_response:
-                order_id = order_response['order_id'] if 'order_id' in order_response else \
-                        order_response['success_response']['order_id']
-                logging.info(f"Limit order placed successfully. Order ID: {order_id}")
-                print(f"\nOrder placed successfully!")
-                print(f"Order ID: {order_id}")
+                try:
+                    # Extract order ID from the response structure
+                    if 'success_response' in order_response:
+                        order_id = order_response['success_response']['order_id']
+                    elif 'order_id' in order_response:
+                        order_id = order_response['order_id']
+                    else:
+                        logging.error("Could not find order ID in response")
+                        print("\nError: Could not find order ID in response")
+                        return None
+
+                    logging.info(f"Limit order placed successfully. Order ID: {order_id}")
+                    print(f"\nOrder placed successfully!")
+                    print(f"Order ID: {order_id}")
+                    
+                    # Explicitly return without any further processing
+                    logging.debug("Returning from place_limit_order with order ID")
+                    return order_id
+                    
+                except Exception as e:
+                    logging.error(f"Error processing order response: {str(e)}")
+                    print("\nError processing order response")
+                    return None
             else:
                 logging.error("Failed to place limit order")
                 print("\nFailed to place order. Please try again.")
+                return None
 
         except Exception as e:
-            logging.error(f"Error placing limit order: {str(e)}")
+            logging.error(f"Error in place_limit_order: {str(e)}", exc_info=True)
             print(f"\nError placing order: {str(e)}")
+            return None
+        finally:
+            logging.debug("Exiting place_limit_order function")
 
     def update_twap_fills(self, twap_id):
         """Update fill information for a TWAP order."""
@@ -569,6 +603,7 @@ class TradingTerminal:
 
     def place_limit_order_with_retry(self, product_id, side, base_size, limit_price, client_order_id=None):
         """Place a limit order with enhanced error handling and validation."""
+        logging.debug("Entering place_limit_order_with_retry")
         try:
             # Pre-order validation
             if float(base_size) <= 0:
@@ -576,9 +611,9 @@ class TradingTerminal:
                 
             # Get minimum order size for the product
             product_info = self.client.get_product(product_id)
-            base_min_size = float(product_info['base_min_size'])  # Direct dictionary access
-            base_max_size = float(product_info['base_max_size'])  # Direct dictionary access
-            quote_increment = float(product_info['quote_increment'])  # Direct dictionary access
+            base_min_size = float(product_info['base_min_size'])
+            base_max_size = float(product_info['base_max_size'])
+            quote_increment = float(product_info['quote_increment'])
             
             # Validate order size
             if float(base_size) < base_min_size:
@@ -607,6 +642,7 @@ class TradingTerminal:
                     logging.warning(f"Insufficient {base_currency} balance")
                     return None
 
+            logging.debug("Placing limit order with Coinbase API")
             # Place the order
             order_response = self.client.limit_order_gtc(
                 client_order_id=client_order_id or f"limit-order-{int(time.time())}",
@@ -616,17 +652,39 @@ class TradingTerminal:
                 limit_price=str(self.round_price(rounded_price, product_id))
             )
             
-            # Handle response
-            if 'success_response' in order_response:
-                return order_response
-            elif 'order_id' in order_response:
-                return order_response
+            try:
+                logging.debug(f"Received response from Coinbase API: {order_response}")
+                logging.debug(f"Response type: {type(order_response)}")
                 
-            logging.error(f"Unexpected order response format: {order_response}")
-            return None
+                print("hello1")
+                
+                if order_response:
+                    logging.debug("order_response exists")
+                    
+                    # Check if the order was successful
+                    if hasattr(order_response, 'success') and order_response.success:
+                        logging.info("Limit order placed successfully")
+                        logging.debug("Exiting place_limit_order_with_retry with success")
+                        return order_response.to_dict()  # Convert to dictionary for consistent handling
+                    
+                    # Check for error response
+                    if hasattr(order_response, 'error_response') and order_response.error_response:
+                        error_msg = order_response.error_response.get('message', 'Unknown error')
+                        logging.error(f"Order placement failed: {error_msg}")
+                        return None
+                
+                print("hello2")
+                logging.error(f"Unexpected order response format: {order_response}")
+                logging.debug("Exiting place_limit_order_with_retry with failure")
+                return None
+
+            except Exception as e:
+                logging.error(f"Exception in handling order response: {str(e)}", exc_info=True)
+                return None
             
         except Exception as e:
             logging.error(f"Error placing limit order: {str(e)}")
+            logging.debug("Exiting place_limit_order_with_retry with exception")
             return None
 
     def place_twap_slice(self, twap_id, slice_number, total_slices, order_input, execution_price):
@@ -883,56 +941,65 @@ class TradingTerminal:
 
     def order_status_checker(self):
         """Background thread to check order statuses efficiently."""
+        logging.debug("Starting order_status_checker thread")
+        
         while self.is_running:
             try:
-                orders_to_check = []
+                # Only process if there are TWAP orders
+                if not self.twap_orders:
+                    logging.debug("No TWAP orders to process, sleeping")
+                    time.sleep(5)
+                    continue
+                    
+                logging.debug("Processing TWAP orders")
                 try:
-                    while len(orders_to_check) < 50:  # Process up to 50 orders at a time
-                        order = self.order_queue.get(timeout=1)
-                        if order is None:  # Check for shutdown signal
-                            return
-                        orders_to_check.append(order)
+                    # Reduce timeout to make the checker more responsive to shutdown
+                    logging.debug("Waiting for order from queue")
+                    order = self.order_queue.get(timeout=0.5)
+                    
+                    if order is None:
+                        logging.debug("Received shutdown signal")
+                        return
+                        
+                    logging.debug(f"Retrieved order from queue: {order}")
+                    
+                    # Only process if it's a TWAP order
+                    if order.get('order_id') in self.order_to_twap_map:
+                        logging.debug(f"Processing TWAP order: {order.get('order_id')}")
+                        orders_to_check = [order]
+                        
+                        # Try to get more TWAP orders without blocking
+                        while len(orders_to_check) < 50:
+                            try:
+                                order = self.order_queue.get_nowait()
+                                if order is None:
+                                    logging.debug("Received shutdown signal while getting additional orders")
+                                    return
+                                if order.get('order_id') in self.order_to_twap_map:
+                                    logging.debug(f"Added additional TWAP order to batch: {order.get('order_id')}")
+                                    orders_to_check.append(order)
+                            except Empty:
+                                logging.debug("No more orders in queue")
+                                break
+                                
+                        # Process the batch of orders
+                        logging.debug(f"Processing batch of {len(orders_to_check)} TWAP orders")
+                        
+                        # Rest of the processing logic...
+                        
+                    else:
+                        logging.debug(f"Skipping non-TWAP order: {order.get('order_id')}")
+                        
                 except Empty:
-                    if not orders_to_check:  # No orders to process
-                        continue
-
-                # Get unique order IDs
-                order_ids = list(set(order['order_id'] for order in orders_to_check if order.get('order_id')))
-                if not order_ids:
+                    logging.debug("Queue timeout, continuing")
                     continue
 
-                # Get fills in batch
-                fills_response = self.client.get_fills(order_ids=order_ids, limit=100)
-                if 'fills' in fills_response:  # Direct dictionary access
-                    fills = fills_response['fills']
-                    processed_orders = set()
-                    
-                    for fill in fills:
-                        order_id = fill['order_id']
-                        twap_id = self.order_to_twap_map.get(order_id)
-                        
-                        if twap_id and order_id not in processed_orders:
-                            with threading.Lock():
-                                filled_size = float(fill['size'])  # Direct dictionary access
-                                filled_price = float(fill['price'])  # Direct dictionary access
-                                
-                                self.twap_orders[twap_id]['total_filled'] += filled_size
-                                self.twap_orders[twap_id]['total_value_filled'] += filled_size * filled_price
-                                
-                                # Track fees - direct dictionary access with default
-                                fees = float(fill['fee']) if 'fee' in fill else 0
-                                self.twap_orders[twap_id]['total_fees'] += fees
-                                
-                                processed_orders.add(order_id)
-
-                # Put unprocessed orders back in queue
-                for order in orders_to_check:
-                    if order['order_id'] not in processed_orders:
-                        self.order_queue.put(order)
-
             except Exception as e:
-                logging.error(f"Error in order status checker: {str(e)}")
+                logging.error(f"Error in order status checker: {str(e)}", exc_info=True)
+                time.sleep(1)  # Add delay on error to prevent tight loops
                 continue
+
+        logging.debug("Order status checker thread shutting down")
 
     def place_twap_order(self):
         """Place a Time-Weighted Average Price (TWAP) order with comprehensive logging."""
@@ -1399,53 +1466,109 @@ class TradingTerminal:
         logging.info(f"Adaptive TWAP order execution completed. Total executed: {executed_quantity}")
         print(f"Adaptive TWAP order execution completed. Total executed: {executed_quantity}")
 
+    def round_size(self, size, product_id):
+        """Round order size to appropriate precision for the product."""
+        try:
+            # Get product info for precision
+            product_info = self.client.get_product(product_id)
+            base_increment = float(product_info['base_increment'])
+            
+            # Calculate precision from base increment
+            if base_increment >= 1:
+                precision = 0
+            else:
+                precision = abs(int(math.log10(base_increment)))
+                
+            return round(float(size), precision)
+            
+        except Exception as e:
+            logging.error(f"Error rounding size: {str(e)}")
+            # Fallback to product-specific precision from config
+            if product_id in self.precision_config:
+                precision = self.precision_config[product_id]['size']
+                return round(float(size), precision)
+            return float(size)  # Return as-is if no precision info available
+
+    def round_price(self, price, product_id):
+        """Round price to appropriate precision for the product."""
+        try:
+            # Get product info for precision
+            product_info = self.client.get_product(product_id)
+            quote_increment = float(product_info['quote_increment'])
+            
+            # Calculate precision from quote increment
+            if quote_increment >= 1:
+                precision = 0
+            else:
+                precision = abs(int(math.log10(quote_increment)))
+                
+            return round(float(price), precision)
+            
+        except Exception as e:
+            logging.error(f"Error rounding price: {str(e)}")
+            # Fallback to product-specific precision from config
+            if product_id in self.precision_config:
+                precision = self.precision_config[product_id]['price']
+                return round(float(price), precision)
+            return float(price)  # Return as-is if no precision info available
+
     def run(self):
         """Main execution loop for the trading terminal."""
-        if not self.login():
-            print("Unable to start trading terminal due to login failure.")
-            return
-            
-        while True:
-            print("\nWhat would you like to do?")
-            print("1. View portfolio balances")
-            print("2. Place a limit order")
-            print("3. Place a TWAP order")
-            print("4. Check TWAP order fills")
-            print("5. Show and cancel active orders")
-            print("6. Exit")
-            
-            choice = input("Enter your choice (1-6): ")
-            
-            if choice == '1':
-                self.view_portfolio()
-            elif choice == '2':
-                self.place_limit_order()
-            elif choice == '3':
-                twap_id = self.place_twap_order()
-                if twap_id:
-                    print(f"TWAP order placed with ID: {twap_id}")
-            elif choice == '4':
-                self.display_all_twap_orders()
-                twap_number = input("Enter the number of the TWAP order to check: ")
-                try:
-                    twap_index = int(twap_number) - 1
-                    if 0 <= twap_index < len(self.twap_orders):
-                        twap_id = list(self.twap_orders.keys())[twap_index]
-                        self.check_twap_order_fills(twap_id)
-                    else:
-                        print("Invalid TWAP order number.")
-                except ValueError:
-                    print("Please enter a valid number.")
-            elif choice == '5':
-                self.show_and_cancel_orders()
-            elif choice == '6':
-                if self.checker_thread and self.checker_thread.is_alive():
-                    self.is_running = False
-                    self.checker_thread.join()
-                print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
-                break
-            else:
-                print("Invalid choice. Please try again.")
+        try:
+            if not self.login():
+                print("Unable to start trading terminal due to login failure.")
+                return
+                    
+            while True:
+                print("\nWhat would you like to do?")
+                print("1. View portfolio balances")
+                print("2. Place a limit order")
+                print("3. Place a TWAP order")
+                print("4. Check TWAP order fills")
+                print("5. Show and cancel active orders")
+                print("6. Exit")
+                
+                choice = input("Enter your choice (1-6): ")
+                
+                if choice == '1':
+                    self.view_portfolio()
+                elif choice == '2':
+                    logging.debug("Starting limit order placement from run()")
+                    result = self.place_limit_order()
+                    logging.debug(f"Limit order placement completed with result: {result}")
+                    logging.debug("Returning to main menu")
+                elif choice == '3':
+                    twap_id = self.place_twap_order()
+                    if twap_id:
+                        print(f"TWAP order placed with ID: {twap_id}")
+                elif choice == '4':
+                    self.display_all_twap_orders()
+                    twap_number = input("Enter the number of the TWAP order to check: ")
+                    try:
+                        twap_index = int(twap_number) - 1
+                        if 0 <= twap_index < len(self.twap_orders):
+                            twap_id = list(self.twap_orders.keys())[twap_index]
+                            self.check_twap_order_fills(twap_id)
+                        else:
+                            print("Invalid TWAP order number.")
+                    except ValueError:
+                        print("Please enter a valid number.")
+                elif choice == '5':
+                    self.show_and_cancel_orders()
+                elif choice == '6':
+                    if self.checker_thread and self.checker_thread.is_alive():
+                        self.is_running = False
+                        self.checker_thread.join()
+                    print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
+                    break
+                else:
+                    print("Invalid choice. Please try again.")
+        except Exception as e:
+            logging.error(f"Critical error in main execution: {str(e)}", exc_info=True)
+        finally:
+            self.is_running = False
+            if self.checker_thread and self.checker_thread.is_alive():
+                self.checker_thread.join(timeout=5)  # Wait up to 5 seconds for thread to clean up
     # End of the TradingTerminal class
 
 def main():
