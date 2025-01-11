@@ -294,8 +294,8 @@ class TradingTerminal:
             logging.error(f"Error checking fills batch: {str(e)}")
             return {}
 
-    def get_top_markets(self, limit=20):
-        """Get top markets by 24h USD volume.
+    def get_consolidated_markets(self, limit=20):
+        """Get top markets by 24h USD volume, consolidating USD and USDC pairs.
         
         Args:
             limit (int): Number of top markets to return. Defaults to 20.
@@ -304,28 +304,58 @@ class TradingTerminal:
             products_response = self.client.get_products()
             products = products_response['products']  # Direct dictionary access
             
-            def get_usd_volume(product):
+            # Group products by base currency
+            consolidated = {}
+            for product in products:
+                product_id = product['product_id']
+                base_currency = product_id.split('-')[0]
+                quote_currency = product_id.split('-')[1]
+                
+                # Only process USD and USDC pairs
+                if quote_currency not in ['USD', 'USDC']:
+                    continue
+                    
                 try:
                     volume = float(product['volume_24h'])
                     price = float(product['price'])
-                    return volume * price
+                    usd_volume = volume * price
                 except (KeyError, ValueError):
-                    return 0
+                    continue
+                    
+                if base_currency not in consolidated:
+                    consolidated[base_currency] = {
+                        'total_volume': 0,
+                        'has_usd': False,
+                        'has_usdc': False,
+                        'usd_product': None,
+                        'usdc_product': None
+                    }
+                
+                consolidated[base_currency]['total_volume'] += usd_volume
+                if quote_currency == 'USD':
+                    consolidated[base_currency]['has_usd'] = True
+                    consolidated[base_currency]['usd_product'] = product_id
+                else:  # USDC
+                    consolidated[base_currency]['has_usdc'] = True
+                    consolidated[base_currency]['usdc_product'] = product_id
 
-            # Sort products by USD volume
-            top_products = sorted(products, key=get_usd_volume, reverse=True)[:limit]
+            # Sort by total volume and take top N
+            top_markets = sorted(
+                [(k, v) for k, v in consolidated.items() if v['has_usd'] or v['has_usdc']], 
+                key=lambda x: x[1]['total_volume'], 
+                reverse=True
+            )[:limit]
 
-            # Format products into rows and columns
+            # Format into rows for display
             NUM_COLUMNS = 4
             rows = []
             current_row = []
             
-            for i, product in enumerate(top_products, 1):
-                volume = get_usd_volume(product)
-                volume_millions = volume / 1_000_000
+            for i, (base_currency, data) in enumerate(top_markets, 1):
+                volume_millions = data['total_volume'] / 1_000_000
                 market_info = [
                     f"{i}.",
-                    product['product_id'],
+                    f"{base_currency}-USD(C)",
                     f"${volume_millions:.2f}M"
                 ]
                 current_row.extend(market_info)
@@ -336,21 +366,19 @@ class TradingTerminal:
             
             # Add any remaining items in the last row
             if current_row:
-                # Pad the last row with empty strings to maintain alignment
-                while len(current_row) < NUM_COLUMNS * 3:  # 3 columns per market (number, id, volume)
+                while len(current_row) < NUM_COLUMNS * 3:
                     current_row.extend(['', '', ''])
                 rows.append(current_row)
 
-            # Create headers for each column
             headers = []
             for i in range(NUM_COLUMNS):
                 headers.extend(['#', 'Market', 'Volume'])
 
-            return rows, headers
+            return rows, headers, top_markets
 
         except Exception as e:
-            logging.error(f"Error fetching top markets: {str(e)}")
-            return [], []
+            logging.error(f"Error fetching consolidated markets: {str(e)}")
+            return [], [], []
 
     def place_limit_order(self):
         """Place a limit order with user input."""
@@ -361,39 +389,69 @@ class TradingTerminal:
 
         logging.info("Starting limit order placement")
         
-        # Get product ID using top markets
+        # Get product ID using consolidated markets
         try:
-            rows, headers = self.get_top_markets(20)  # Get top 20 markets
-            
-            if not rows:
-                logging.error("Failed to fetch top markets")
-                print("Error fetching market data. Please try again.")
-                return
-                
-            print("\nTop Markets by 24h Volume:")
-            print("=" * 120)  # Adjust width based on your terminal
-            print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
-            print("=" * 120)  # Matching bottom border
-            
-            while True:
-                product_choice = input("\nEnter the number of the market to trade (1-20): ")
-                try:
-                    index = int(product_choice)
-                    if 1 <= index <= 20:
-                        # Calculate the row and position within the row
-                        row_index = (index - 1) // 4
-                        col_index = ((index - 1) % 4) * 3 + 1  # Skip the number and get the product_id
-                        product_id = rows[row_index][col_index]
-                        break
-                    else:
-                        print("Invalid selection. Please enter a number between 1 and 20.")
-                except ValueError:
-                    print("Please enter a valid number.")
-                    
+            rows, headers, top_markets = self.get_consolidated_markets(20)
         except Exception as e:
-            logging.error(f"Error fetching products: {str(e)}")
-            print("Error fetching available products.")
+            logging.error(f"Error fetching and processing market data: {str(e)}")
+            print("Error fetching market data. Please try again.")
             return
+            
+        if not rows:
+            logging.error("Failed to fetch top markets")
+            print("Error fetching market data. Please try again.")
+            return
+            
+        print("\nTop Markets by 24h Volume:")
+        print("=" * 120)
+        print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
+        print("=" * 120)
+        
+        # Get market selection
+        while True:
+            product_choice = input("\nEnter the number of the market to trade (1-20): ")
+            try:
+                index = int(product_choice)
+                if 1 <= index <= len(top_markets):
+                    base_currency, market_data = top_markets[index - 1]
+                    
+                    # Handle quote currency selection
+                    available_quotes = []
+                    if market_data['has_usd']:
+                        available_quotes.append('USD')
+                    if market_data['has_usdc']:
+                        available_quotes.append('USDC')
+                        
+                    if len(available_quotes) > 1:
+                        print(f"\nAvailable quote currencies for {base_currency}:")
+                        for i, quote in enumerate(available_quotes, 1):
+                            print(f"{i}. {quote}")
+                            
+                        while True:
+                            quote_choice = input(f"Select quote currency (1-{len(available_quotes)}): ")
+                            try:
+                                quote_index = int(quote_choice)
+                                if 1 <= quote_index <= len(available_quotes):
+                                    quote_currency = available_quotes[quote_index - 1]
+                                    break
+                                else:
+                                    print(f"Please enter a number between 1 and {len(available_quotes)}")
+                            except ValueError:
+                                print("Please enter a valid number")
+                    else:
+                        quote_currency = available_quotes[0]
+                    
+                    product_id = f"{base_currency}-{quote_currency}"
+                    if quote_currency == 'USD':
+                        product_id = market_data['usd_product']
+                    else:
+                        product_id = market_data['usdc_product']
+                        
+                    break
+                else:
+                    print("Invalid selection. Please enter a number between 1 and 20.")
+            except ValueError:
+                print("Please enter a valid number.")
 
         # Get side (buy/sell)
         while True:
