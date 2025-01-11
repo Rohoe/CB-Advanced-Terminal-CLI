@@ -294,8 +294,12 @@ class TradingTerminal:
             logging.error(f"Error checking fills batch: {str(e)}")
             return {}
 
-    def get_top_markets(self):
-        """Get top 10 markets by 24h USD volume."""
+    def get_top_markets(self, limit=10):
+        """Get top markets by 24h USD volume.
+        
+        Args:
+            limit (int): Number of top markets to return. Defaults to 10.
+        """
         try:
             products_response = self.client.get_products()
             products = products_response['products']  # Direct dictionary access
@@ -308,12 +312,175 @@ class TradingTerminal:
                 except (KeyError, ValueError):
                     return 0
 
-            top_products = sorted(products, key=get_usd_volume, reverse=True)[:10]
+            top_products = sorted(products, key=get_usd_volume, reverse=True)[:limit]
             return [(product['product_id'], get_usd_volume(product)) for product in top_products]
             
         except Exception as e:
             logging.error(f"Error fetching top markets: {str(e)}")
             return []
+
+    def place_limit_order(self):
+        """Place a limit order with user input."""
+        if not self.client:
+            logging.warning("Attempt to place limit order without login")
+            print("Please login first.")
+            return
+
+        logging.info("Starting limit order placement")
+        
+        # Get product ID using top markets
+        try:
+            top_markets = self.get_top_markets(20)  # Changed to show top 20 markets
+            
+            if not top_markets:
+                logging.error("Failed to fetch top markets")
+                print("Error fetching market data. Please try again.")
+                return
+                
+            print("\nTop 20 Markets by 24h Volume:")
+            print("--------------------------------")
+            market_data = []
+            for i, (product_id, volume) in enumerate(top_markets, 1):
+                volume_millions = volume / 1_000_000  # Convert to millions
+                market_data.append([
+                    f"{i}.", 
+                    product_id, 
+                    f"${volume_millions:.2f}M"
+                ])
+            
+            # Use tabulate for better formatting
+            print(tabulate(market_data, headers=["#", "Market", "24h Volume"], tablefmt="simple"))
+            
+            while True:
+                product_choice = input("\nEnter the number of the market to trade (1-20): ")
+                try:
+                    index = int(product_choice) - 1
+                    if 0 <= index < len(top_markets):
+                        product_id = top_markets[index][0]
+                        break
+                    else:
+                        print("Invalid selection. Please enter a number between 1 and 20.")
+                except ValueError:
+                    print("Please enter a valid number.")
+                    
+        except Exception as e:
+            logging.error(f"Error fetching products: {str(e)}")
+            print("Error fetching available products.")
+            return
+
+        # Get side (buy/sell)
+        while True:
+            side = input("\nEnter order side (buy/sell): ").upper()
+            if side in ['BUY', 'SELL']:
+                break
+            print("Invalid side. Please enter 'buy' or 'sell'.")
+
+        # Get current market prices
+        try:
+            current_prices = self.get_current_prices(product_id)
+            if current_prices:
+                print(f"\nCurrent market prices for {product_id}:")
+                print(f"Bid: ${current_prices['bid']:.2f}")
+                print(f"Ask: ${current_prices['ask']:.2f}")
+                print(f"Mid: ${current_prices['mid']:.2f}")
+        except Exception as e:
+            logging.error(f"Error fetching current prices: {str(e)}")
+            print("Unable to fetch current market prices.")
+            return
+
+        # Get limit price
+        while True:
+            try:
+                limit_price = float(input("\nEnter limit price: "))
+                if limit_price <= 0:
+                    print("Price must be greater than 0.")
+                    continue
+                break
+            except ValueError:
+                print("Please enter a valid number.")
+
+        # Get order size
+        while True:
+            try:
+                base_size = float(input("\nEnter order size: "))
+                if base_size <= 0:
+                    print("Size must be greater than 0.")
+                    continue
+                break
+            except ValueError:
+                print("Please enter a valid number.")
+
+        # Show order summary and confirm
+        print("\nOrder Summary:")
+        print(f"Product: {product_id}")
+        print(f"Side: {side}")
+        print(f"Size: {base_size}")
+        print(f"Limit Price: ${limit_price:.2f}")
+
+        if side == "BUY":
+            total_cost = base_size * limit_price
+            print(f"Total Cost: ${total_cost:.2f}")
+        else:
+            total_value = base_size * limit_price
+            print(f"Total Value: ${total_value:.2f}")
+
+        confirm = input("\nDo you want to place this order? (yes/no): ").lower()
+        if confirm != 'yes':
+            print("Order cancelled.")
+            return
+
+        # Place the order
+        try:
+            order_response = self.place_limit_order_with_retry(
+                product_id=product_id,
+                side=side,
+                base_size=str(base_size),
+                limit_price=str(limit_price),
+                client_order_id=f"limit-{int(time.time())}"
+            )
+
+            if order_response:
+                order_id = order_response['order_id'] if 'order_id' in order_response else \
+                        order_response['success_response']['order_id']
+                logging.info(f"Limit order placed successfully. Order ID: {order_id}")
+                print(f"\nOrder placed successfully!")
+                print(f"Order ID: {order_id}")
+            else:
+                logging.error("Failed to place limit order")
+                print("\nFailed to place order. Please try again.")
+
+        except Exception as e:
+            logging.error(f"Error placing limit order: {str(e)}")
+            print(f"\nError placing order: {str(e)}")
+
+    def update_twap_fills(self, twap_id):
+        """Update fill information for a TWAP order."""
+        if twap_id not in self.twap_orders:
+            return
+
+        twap_info = self.twap_orders[twap_id]
+        order_ids = twap_info['orders']
+
+        # Process orders in batches
+        batch_size = 50
+        for i in range(0, len(order_ids), batch_size):
+            batch_order_ids = order_ids[i:i + batch_size]
+            fills = self.check_order_fills_batch(batch_order_ids)
+
+            for order_id, fill_info in fills.items():
+                old_filled = twap_info.get(f'filled_{order_id}', 0)
+                new_filled = fill_info['filled_size']
+                
+                if new_filled > old_filled:
+                    twap_info[f'filled_{order_id}'] = new_filled
+                    twap_info['total_filled'] += (new_filled - old_filled)
+                    twap_info['total_value_filled'] += fill_info['filled_value']
+                    twap_info['total_fees'] += fill_info['fees']
+                    
+                    if fill_info['is_maker']:
+                        twap_info['maker_orders'] += 1
+                    else:
+                        twap_info['taker_orders'] += 1
 
     def place_limit_order_with_retry(self, product_id, side, base_size, limit_price, client_order_id=None):
         """Place a limit order with enhanced error handling and validation."""
@@ -376,35 +543,6 @@ class TradingTerminal:
         except Exception as e:
             logging.error(f"Error placing limit order: {str(e)}")
             return None
-
-    def update_twap_fills(self, twap_id):
-        """Update fill information for a TWAP order."""
-        if twap_id not in self.twap_orders:
-            return
-
-        twap_info = self.twap_orders[twap_id]
-        order_ids = twap_info['orders']
-
-        # Process orders in batches
-        batch_size = 50
-        for i in range(0, len(order_ids), batch_size):
-            batch_order_ids = order_ids[i:i + batch_size]
-            fills = self.check_order_fills_batch(batch_order_ids)
-
-            for order_id, fill_info in fills.items():
-                old_filled = twap_info.get(f'filled_{order_id}', 0)
-                new_filled = fill_info['filled_size']
-                
-                if new_filled > old_filled:
-                    twap_info[f'filled_{order_id}'] = new_filled
-                    twap_info['total_filled'] += (new_filled - old_filled)
-                    twap_info['total_value_filled'] += fill_info['filled_value']
-                    twap_info['total_fees'] += fill_info['fees']
-                    
-                    if fill_info['is_maker']:
-                        twap_info['maker_orders'] += 1
-                    else:
-                        twap_info['taker_orders'] += 1
 
     def place_twap_slice(self, twap_id, slice_number, total_slices, order_input, execution_price):
         """Place a single TWAP slice with comprehensive error handling."""
@@ -635,7 +773,7 @@ class TradingTerminal:
             logging.debug("Making test authentication request")
             test_response = self.client.get_accounts()
             
-            logging.debug(f"Authentication response received: {test_response}")
+            # logging.debug(f"Authentication response received: {test_response}")
             
             # Access test_response.accounts which should be a list
             if not hasattr(test_response, 'accounts'):
