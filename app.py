@@ -230,22 +230,26 @@ class TradingTerminal:
 
         try:
             order_response = self.client.get_order(order_id)
-            order = order_response['order']  # Direct dictionary access
+            if hasattr(order_response, 'order'):
+                order = order_response.order
+                
+                filled = order.status == 'FILLED'
+                filled_size = float(order.filled_size) if hasattr(order, 'filled_size') else 0
+                filled_price = float(order.average_filled_price)
+                
+                status = {'filled': filled, 'filled_size': filled_size, 'filled_price': filled_price}
+                
+                # Update cache
+                self.order_status_cache[order_id] = (status, current_time)
+                
+                return status
             
-            filled = order['status'] == 'FILLED'
-            filled_size = float(order['filled_size']) if 'filled_size' in order else 0
-            filled_price = float(order['average_filled_price'])
-            
-            status = {'filled': filled, 'filled_size': filled_size, 'filled_price': filled_price}
-            
-            # Update cache
-            self.order_status_cache[order_id] = (status, current_time)
-            
-            return status
-            
+            logging.warning(f"No order data found for order ID: {order_id}")
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+                
         except Exception as e:
             logging.error(f"Error checking order status for {order_id}: {str(e)}")
-            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
+            return {'filled': False, 'filled_size': 0, 'filled_price': 0}    
 
     def get_current_prices(self, product_id: str):
         """Get current bid, ask, and mid prices for a product."""
@@ -273,7 +277,11 @@ class TradingTerminal:
 
         try:
             fills_response = self.client.get_fills(order_ids=order_ids)
-            fills = fills_response['fills']  # Direct dictionary access
+            if not hasattr(fills_response, 'fills'):
+                logging.warning("No fills data in response")
+                return {}
+                
+            fills = fills_response.fills
             
             fills_by_order = defaultdict(lambda: {
                 'filled_size': 0.0,
@@ -283,11 +291,11 @@ class TradingTerminal:
             })
 
             for fill in fills:
-                order_id = fill['order_id']
-                fill_size = float(fill['size'])
-                fill_price = float(fill['price'])
-                fill_fee = float(fill['fee']) if 'fee' in fill else 0
-                is_maker = fill.get('liquidity_indicator') == 'M'
+                order_id = fill.order_id
+                fill_size = float(fill.size)
+                fill_price = float(fill.price)
+                fill_fee = float(fill.fee) if hasattr(fill, 'fee') else 0
+                is_maker = getattr(fill, 'liquidity_indicator', '') == 'M'
 
                 fills_by_order[order_id]['filled_size'] += fill_size
                 fills_by_order[order_id]['filled_value'] += fill_size * fill_price
@@ -753,10 +761,17 @@ class TradingTerminal:
         """Get list of active orders."""
         try:
             orders_response = self.client.list_orders()
-            all_orders = orders_response['orders']  # Direct dictionary access
-            active_orders = [order for order in all_orders 
-                           if order['status'] in ['OPEN', 'PENDING']]  # Direct dictionary access
-            return active_orders
+            
+            # Use dot notation instead of dictionary access
+            if hasattr(orders_response, 'orders'):
+                all_orders = orders_response.orders
+                active_orders = [order for order in all_orders 
+                            if order.status in ['OPEN', 'PENDING']]
+                return active_orders
+            else:
+                logging.warning("No orders field found in response")
+                return []
+                
         except Exception as e:
             logging.error(f"Error fetching orders: {str(e)}")
             return []
@@ -779,21 +794,21 @@ class TradingTerminal:
             # Display orders
             table_data = []
             for i, order in enumerate(active_orders, 1):
-                order_config = order['order_configuration']  # Direct dictionary access
-                config_type = next(iter(order_config))
-                config = order_config[config_type]
+                order_config = order.order_configuration
+                config_type = next(iter(vars(order_config)))
+                config = getattr(order_config, config_type)
                 
-                size = config['base_size'] if 'base_size' in config else 'N/A'
-                price = config['limit_price'] if 'limit_price' in config else 'N/A'
+                size = getattr(config, 'base_size', 'N/A')
+                price = getattr(config, 'limit_price', 'N/A')
                 
                 table_data.append([
                     i,
-                    order['order_id'],
-                    order['product_id'],
-                    order['side'],
+                    order.order_id,
+                    order.product_id,
+                    order.side,
                     size,
                     price,
-                    order['status']
+                    order.status
                 ])
 
             print("\nActive Orders:")
@@ -805,21 +820,22 @@ class TradingTerminal:
                 if action == 'no':
                     break
                 elif action == 'all':
-                    order_ids = [order['order_id'] for order in active_orders]
+                    order_ids = [order.order_id for order in active_orders]
                     result = self.client.cancel_orders(order_ids)
-                    cancelled_count = len(result['results']) if 'results' in result else 0
-                    logging.info(f"Cancelled {cancelled_count} orders")
-                    print(f"Cancelled {cancelled_count} orders.")
+                    if hasattr(result, 'results'):
+                        cancelled_count = len(result.results)
+                        logging.info(f"Cancelled {cancelled_count} orders")
+                        print(f"Cancelled {cancelled_count} orders.")
                     break
                 elif action == 'yes':
                     order_number = input("Enter the Number of the order to cancel: ")
                     try:
                         order_index = int(order_number) - 1
                         if 0 <= order_index < len(active_orders):
-                            order_id = active_orders[order_index]['order_id']
+                            order_id = active_orders[order_index].order_id
                             result = self.client.cancel_orders([order_id])
                             
-                            if result and 'results' in result and result['results']:
+                            if result and hasattr(result, 'results') and result.results:
                                 logging.info(f"Order {order_id} cancelled successfully")
                                 print(f"Order {order_id} cancelled successfully.")
                                 active_orders = self.get_active_orders()
@@ -837,7 +853,7 @@ class TradingTerminal:
 
         except Exception as e:
             logging.error(f"Error managing orders: {str(e)}")
-            print(f"Error managing orders: {str(e)}")
+            print(f"Error managing orders: {str(e)}")        
 
     def view_portfolio(self):
         """View and display the user's portfolio."""
