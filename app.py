@@ -231,42 +231,6 @@ class TradingTerminal:
         logging.warning(f"No account found for currency: {currency}")
         return 0
 
-    def check_order_filled(self, order_id):
-        """Check if an order has been filled."""
-        if not order_id:
-            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
-
-        current_time = time.time()
-        
-        # Check cache first
-        if order_id in self.order_status_cache:
-            cached_status, cache_time = self.order_status_cache[order_id]
-            if current_time - cache_time < self.cache_ttl:
-                return cached_status
-
-        try:
-            order_response = self.client.get_order(order_id)
-            if hasattr(order_response, 'order'):
-                order = order_response.order
-                
-                filled = order.status == 'FILLED'
-                filled_size = float(order.filled_size) if hasattr(order, 'filled_size') else 0
-                filled_price = float(order.average_filled_price)
-                
-                status = {'filled': filled, 'filled_size': filled_size, 'filled_price': filled_price}
-                
-                # Update cache
-                self.order_status_cache[order_id] = (status, current_time)
-                
-                return status
-            
-            logging.warning(f"No order data found for order ID: {order_id}")
-            return {'filled': False, 'filled_size': 0, 'filled_price': 0}
-                
-        except Exception as e:
-            logging.error(f"Error checking order status for {order_id}: {str(e)}")
-            return {'filled': False, 'filled_size': 0, 'filled_price': 0}    
-
     def get_current_prices(self, product_id: str):
         """Get current bid, ask, and mid prices for a product."""
         try:
@@ -287,7 +251,9 @@ class TradingTerminal:
             return None
 
     def check_order_fills_batch(self, order_ids):
-        """Check fills for multiple orders efficiently."""
+        """Check fills for multiple orders efficiently.
+        Returns a dictionary mapping order IDs to their fill information.
+        """
         if not order_ids:
             return {}
 
@@ -303,23 +269,36 @@ class TradingTerminal:
                 'filled_size': 0.0,
                 'filled_value': 0.0,
                 'fees': 0.0,
-                'is_maker': False
+                'is_maker': False,
+                'average_price': 0.0,
+                'status': 'UNKNOWN'
             })
 
+            # First pass: accumulate fill data
             for fill in fills:
                 order_id = fill.order_id
                 fill_size = float(fill.size)
                 fill_price = float(fill.price)
+                fill_value = fill_size * fill_price
                 fill_fee = float(fill.fee) if hasattr(fill, 'fee') else 0
                 is_maker = getattr(fill, 'liquidity_indicator', '') == 'M'
 
-                fills_by_order[order_id]['filled_size'] += fill_size
-                fills_by_order[order_id]['filled_value'] += fill_size * fill_price
-                fills_by_order[order_id]['fees'] += fill_fee
-                fills_by_order[order_id]['is_maker'] |= is_maker
+                order_data = fills_by_order[order_id]
+                order_data['filled_size'] += fill_size
+                order_data['filled_value'] += fill_value
+                order_data['fees'] += fill_fee
+                order_data['is_maker'] |= is_maker
+
+            # Second pass: calculate average prices and determine status
+            for order_id, data in fills_by_order.items():
+                if data['filled_size'] > 0:
+                    data['average_price'] = data['filled_value'] / data['filled_size']
+                    data['status'] = 'FILLED'
+                else:
+                    data['status'] = 'UNFILLED'
 
             return fills_by_order
-            
+                
         except Exception as e:
             logging.error(f"Error checking fills batch: {str(e)}")
             return {}
@@ -597,26 +576,31 @@ class TradingTerminal:
             logging.debug("Exiting place_limit_order function")
 
     def update_twap_fills(self, twap_id):
-        """Update fill information for a TWAP order."""
+        """Update fill information for a TWAP order using consolidated fill checking."""
         if twap_id not in self.twap_orders:
+            logging.warning(f"TWAP order {twap_id} not found")
             return
 
         twap_info = self.twap_orders[twap_id]
         order_ids = twap_info['orders']
 
-        # Process orders in batches
-        batch_size = 50
-        for i in range(0, len(order_ids), batch_size):
-            batch_order_ids = order_ids[i:i + batch_size]
-            fills = self.check_order_fills_batch(batch_order_ids)
+        # Reset accumulated values to prevent double-counting
+        twap_info['total_filled'] = 0.0
+        twap_info['total_value_filled'] = 0.0
+        twap_info['total_fees'] = 0.0
+        twap_info['maker_orders'] = 0
+        twap_info['taker_orders'] = 0
 
-            for order_id, fill_info in fills.items():
-                old_filled = twap_info.get(f'filled_{order_id}', 0)
-                new_filled = fill_info['filled_size']
-                
-                if new_filled > old_filled:
-                    twap_info[f'filled_{order_id}'] = new_filled
-                    twap_info['total_filled'] += (new_filled - old_filled)
+        try:
+            # Process orders in batches to respect rate limits
+            batch_size = 50
+            for i in range(0, len(order_ids), batch_size):
+                batch_order_ids = order_ids[i:i + batch_size]
+                fills = self.check_order_fills_batch(batch_order_ids)
+
+                # Update TWAP tracking with fill information
+                for order_id, fill_info in fills.items():
+                    twap_info['total_filled'] += fill_info['filled_size']
                     twap_info['total_value_filled'] += fill_info['filled_value']
                     twap_info['total_fees'] += fill_info['fees']
                     
@@ -624,6 +608,17 @@ class TradingTerminal:
                         twap_info['maker_orders'] += 1
                     else:
                         twap_info['taker_orders'] += 1
+                        
+                    # Store order-specific fill data
+                    twap_info[f'filled_{order_id}'] = fill_info['filled_size']
+                    twap_info[f'price_{order_id}'] = fill_info['average_price']
+
+            logging.info(f"Updated TWAP {twap_id} fills: {twap_info['total_filled']} units filled")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error updating TWAP fills: {str(e)}")
+            return False
 
     def place_limit_order_with_retry(self, product_id, side, base_size, limit_price, client_order_id=None):
         """Place a limit order with enhanced error handling and validation."""
@@ -977,16 +972,11 @@ class TradingTerminal:
         
         while self.is_running:
             try:
-                # Only process if there are TWAP orders
                 if not self.twap_orders:
-                    # logging.debug("No TWAP orders to process, sleeping")
                     time.sleep(5)
                     continue
                     
-                # logging.debug("Processing TWAP orders")
                 try:
-                    # Reduce timeout to make the checker more responsive to shutdown
-                    # logging.debug("Waiting for order from queue")
                     order = self.order_queue.get(timeout=0.5)
                     
                     if order is None:
@@ -995,28 +985,30 @@ class TradingTerminal:
                         
                     logging.debug(f"Retrieved order from queue: {order}")
                     
-                    # Only process if it's a TWAP order
                     if order.get('order_id') in self.order_to_twap_map:
                         logging.debug(f"Processing TWAP order: {order.get('order_id')}")
                         orders_to_check = [order]
                         
-                        # Try to get more TWAP orders without blocking
+                        # Collect additional orders for batch processing
                         while len(orders_to_check) < 50:
                             try:
                                 order = self.order_queue.get_nowait()
                                 if order is None:
-                                    logging.debug("Received shutdown signal while getting additional orders")
                                     return
                                 if order.get('order_id') in self.order_to_twap_map:
-                                    logging.debug(f"Added additional TWAP order to batch: {order.get('order_id')}")
                                     orders_to_check.append(order)
                             except Empty:
-                                logging.debug("No more orders in queue")
                                 break
                                 
-                        # Process each order in the batch
-                        for order in orders_to_check:
-                            order_id = order.get('order_id')
+                        # Process orders in batch
+                        order_ids = [order['order_id'] for order in orders_to_check 
+                                if 'order_id' in order]
+                        
+                        fills = self.check_order_fills_batch(order_ids)
+                        
+                        # Update TWAP tracking for each order
+                        for order_data in orders_to_check:
+                            order_id = order_data.get('order_id')
                             if not order_id:
                                 continue
 
@@ -1024,67 +1016,34 @@ class TradingTerminal:
                             if not twap_id:
                                 continue
 
-                            # Check order status
-                            try:
-                                self.rate_limiter.wait()  # Respect rate limits
-                                order_response = self.client.get_order(order_id)
-                                if not hasattr(order_response, 'order'):
-                                    continue
+                            fill_info = fills.get(order_id, {})
+                            
+                            if fill_info.get('status') == 'FILLED':
+                                with self.order_lock:
+                                    if order_id not in self.filled_orders:
+                                        self.filled_orders.append(order_id)
+                                        # Update TWAP statistics
+                                        self.twap_orders[twap_id]['total_filled'] += fill_info['filled_size']
+                                        self.twap_orders[twap_id]['total_value_filled'] += fill_info['filled_value']
+                                        self.twap_orders[twap_id]['total_fees'] += fill_info['fees']
+                                        
+                                        if fill_info['is_maker']:
+                                            self.twap_orders[twap_id]['maker_orders'] += 1
+                                        else:
+                                            self.twap_orders[twap_id]['taker_orders'] += 1
 
-                                order_info = order_response.order
-                                status = order_info.status
-                                
-                                # Update TWAP order tracking
-                                if status == 'FILLED':
-                                    with self.order_lock:
-                                        if order_id not in self.filled_orders:
-                                            self.filled_orders.append(order_id)
-                                            
-                                            # Update fill statistics
-                                            filled_size = float(order_info.filled_size)
-                                            filled_price = float(order_info.average_filled_price)
-                                            filled_value = filled_size * filled_price
-                                            
-                                            self.twap_orders[twap_id]['total_filled'] += filled_size
-                                            self.twap_orders[twap_id]['total_value_filled'] += filled_value
-                                            
-                                            # Get fee information from fills
-                                            self.rate_limiter.wait()  # Respect rate limits
-                                            fills_response = self.client.get_fills(order_ids=[order_id])
-                                            if hasattr(fills_response, 'fills'):
-                                                for fill in fills_response.fills:
-                                                    fee = float(fill.fee) if hasattr(fill, 'fee') else 0
-                                                    self.twap_orders[twap_id]['total_fees'] += fee
-                                                    
-                                                    # Track maker/taker status
-                                                    if hasattr(fill, 'liquidity_indicator'):
-                                                        if fill.liquidity_indicator == 'M':
-                                                            self.twap_orders[twap_id]['maker_orders'] += 1
-                                                        else:
-                                                            self.twap_orders[twap_id]['taker_orders'] += 1
-                                
-                            except Exception as e:
-                                logging.error(f"Error checking order {order_id}: {str(e)}")
-                                continue
+                        # Requeue unfilled orders
+                        for order_data in orders_to_check:
+                            order_id = order_data.get('order_id')
+                            if order_id and order_id not in self.filled_orders:
+                                self.order_queue.put(order_data)
 
-                        # Put the processed orders back in the queue for continued monitoring
-                        # unless they are completely filled
-                        for order in orders_to_check:
-                            order_id = order.get('order_id')
-                            if order_id not in self.filled_orders:
-                                self.order_queue.put(order)
-
-                    else:
-                        logging.debug(f"Skipping non-TWAP order: {order.get('order_id')}")
-                        
                 except Empty:
-                    # logging.debug("Queue timeout, continuing")
                     continue
 
             except Exception as e:
                 logging.error(f"Error in order status checker: {str(e)}", exc_info=True)
-                time.sleep(1)  # Add delay on error to prevent tight loops
-                continue
+                time.sleep(1)
 
         logging.debug("Order status checker thread shutting down")
 
@@ -1342,71 +1301,22 @@ class TradingTerminal:
         return twap_id
 
     def check_twap_order_fills(self, twap_id):
-        """Check fills for a specific TWAP order and update statistics."""
+        """Check fills for a specific TWAP order and display summary."""
         if twap_id not in self.twap_orders:
             print(f"TWAP order {twap_id} not found.")
             return
 
-        twap_info = self.twap_orders[twap_id]
-        logging.info(f"Checking fills for TWAP order {twap_id} with {len(twap_info['orders'])} orders")
+        logging.info(f"Checking fills for TWAP order {twap_id}")
         
-        try:
-            unique_order_ids = list(set(twap_info['orders']))
-            batch_size = 50
-            order_batches = [unique_order_ids[i:i + batch_size] 
-                            for i in range(0, len(unique_order_ids), batch_size)]
-            
-            # Process each batch of orders
-            for batch in order_batches:
-                logging.info(f"Processing batch of {len(batch)} orders")
-                
-                # Get fills for this batch
-                try:
-                    self.rate_limiter.wait()
-                    fills_response = self.client.get_fills(order_ids=batch)
-                    
-                    if hasattr(fills_response, 'fills'):
-                        for fill in fills_response.fills:
-                            filled_size = float(fill.size)
-                            filled_price = float(fill.price)
-                            
-                            # Update maker/taker counts
-                            if hasattr(fill, 'liquidity_indicator'):
-                                if fill.liquidity_indicator == 'M':
-                                    twap_info['maker_orders'] += 1
-                                else:
-                                    twap_info['taker_orders'] += 1
-                            
-                            # Update fill totals
-                            twap_info['total_filled'] += filled_size
-                            twap_info['total_value_filled'] += filled_size * filled_price
-                            
-                            # Update fees
-                            fee = float(fill.fee) if hasattr(fill, 'fee') else 0
-                            twap_info['total_fees'] += fee
-                            
-                except Exception as e:
-                    logging.error(f"Error processing fills batch: {str(e)}")
-                    continue
-
-            # Display summary using the consolidated function
+        # Update fill information
+        if self.update_twap_fills(twap_id):
+            # Display updated summary
             self.display_twap_summary(twap_id, show_orders=True)
-
-        except Exception as e:
-            logging.error(f"Error checking TWAP fills: {str(e)}")
-            print(f"Error checking TWAP fills: {str(e)}")
+        else:
+            print("Error checking TWAP fills. Please try again.")
 
     def get_twap_status(self, twap_id):
-        """Get comprehensive status of a TWAP order execution.
-        
-        Returns a dictionary containing:
-        - status: Overall execution status
-        - total_orders: Number of orders placed
-        - filled_orders: Number of orders filled
-        - cancelled_orders: Number of orders cancelled
-        - pending_orders: Number of orders still pending
-        - completion_rate: Percentage of value filled vs placed
-        """
+        """Get comprehensive status of a TWAP order execution."""
         if twap_id not in self.twap_orders:
             logging.warning(f"TWAP order {twap_id} not found")
             return {
@@ -1415,9 +1325,9 @@ class TradingTerminal:
             }
             
         twap_info = self.twap_orders[twap_id]
-        total_orders = len(twap_info['orders'])
+        order_ids = twap_info['orders']
         
-        if total_orders == 0:
+        if not order_ids:
             return {
                 'status': 'Initialized',
                 'total_orders': 0,
@@ -1428,14 +1338,15 @@ class TradingTerminal:
             }
         
         try:
-            # Get current status of all orders
-            filled_count = len(self.filled_orders)
+            # Get latest fill information
+            fills = self.check_order_fills_batch(order_ids)
+            
+            filled_count = len([oid for oid in order_ids if fills.get(oid, {}).get('status') == 'FILLED'])
             cancelled_count = 0
             pending_count = 0
             
             # Check remaining unfilled orders
-            unfilled_orders = [order_id for order_id in twap_info['orders'] 
-                            if order_id not in self.filled_orders]
+            unfilled_orders = [oid for oid in order_ids if fills.get(oid, {}).get('status') != 'FILLED']
             
             if unfilled_orders:
                 self.rate_limiter.wait()
@@ -1454,24 +1365,24 @@ class TradingTerminal:
                                 twap_info['total_value_placed']) * 100
             
             # Determine overall status
-            if pending_count == 0 and (filled_count + cancelled_count == total_orders):
+            if pending_count == 0 and (filled_count + cancelled_count == len(order_ids)):
                 status = 'Complete'
             elif filled_count > 0:
                 status = 'Partially Filled'
-            elif cancelled_count == total_orders:
+            elif cancelled_count == len(order_ids):
                 status = 'Cancelled'
             else:
                 status = 'Active'
                 
             return {
                 'status': status,
-                'total_orders': total_orders,
+                'total_orders': len(order_ids),
                 'filled_orders': filled_count,
                 'cancelled_orders': cancelled_count,
                 'pending_orders': pending_count,
                 'completion_rate': completion_rate
             }
-            
+                
         except Exception as e:
             logging.error(f"Error getting TWAP status: {str(e)}")
             return {
