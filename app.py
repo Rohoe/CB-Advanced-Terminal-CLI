@@ -1335,9 +1335,11 @@ class TradingTerminal:
         logging.info(f"Checking fills for TWAP order {twap_id} with {len(twap_info['orders'])} orders")
         
         try:
+            # Get unique order IDs and batch them
             unique_order_ids = list(set(twap_info['orders']))
-            batch_size = 50
-            order_batches = [unique_order_ids[i:i + batch_size] for i in range(0, len(unique_order_ids), batch_size)]
+            batch_size = 50  # API limit for batch requests
+            order_batches = [unique_order_ids[i:i + batch_size] 
+                            for i in range(0, len(unique_order_ids), batch_size)]
             
             total_filled = 0
             total_value_filled = 0
@@ -1347,69 +1349,92 @@ class TradingTerminal:
             for batch in order_batches:
                 logging.info(f"Processing batch of {len(batch)} orders")
                 
-                # Get fills for this batch
+                # First get order statuses
                 try:
-                    fills_response = self.client.get_fills(order_ids=batch)
-                    if 'fills' in fills_response:
-                        fills = fills_response['fills']  # Direct dictionary access
-                        for fill in fills:
-                            filled_size = float(fill['size'])
-                            filled_price = float(fill['price'])
-                            total_filled += filled_size
-                            total_value_filled += filled_price * filled_size
-                            
-                            if fill.get('liquidity_indicator') == 'M':
-                                twap_info['maker_orders'] += 1
-                            else:
-                                twap_info['taker_orders'] += 1
-                                
-                            fees = float(fill['fee']) if 'fee' in fill else 0
-                            twap_info['total_fees'] += fees
-                except Exception as e:
-                    logging.error(f"Error getting fills for batch: {str(e)}")
-                
-                # Get order statuses in batch
-                try:
+                    self.rate_limiter.wait()
                     orders_response = self.client.list_orders(order_ids=batch)
-                    if 'orders' in orders_response:
-                        orders = orders_response['orders']  # Direct dictionary access
-                        for order in orders:
+                    if hasattr(orders_response, 'orders'):
+                        for order in orders_response.orders:
                             status = {
-                                'status': order['status'],
-                                'filled_size': float(order['filled_size']) if 'filled_size' in order else 0,
-                                'price': float(order['average_filled_price']) if 'average_filled_price' in order else 0
+                                'status': order.status,
+                                'filled_size': float(order.filled_size) if hasattr(order, 'filled_size') else 0,
+                                'average_filled_price': float(order.average_filled_price) if hasattr(order, 'average_filled_price') else 0
                             }
-                            order_statuses[order['order_id']] = status
+                            order_statuses[order.order_id] = status
                 except Exception as e:
-                    logging.error(f"Error getting order statuses for batch: {str(e)}")
+                    logging.error(f"Error getting order statuses: {str(e)}")
+                    continue
 
-            # Update TWAP info
+                # Then get fills for filled orders
+                try:
+                    filled_orders = [order_id for order_id in batch 
+                                if order_statuses.get(order_id, {}).get('status') == 'FILLED']
+                    
+                    if filled_orders:
+                        self.rate_limiter.wait()
+                        fills_response = self.client.get_fills(order_ids=filled_orders)
+                        
+                        if hasattr(fills_response, 'fills'):
+                            for fill in fills_response.fills:
+                                filled_size = float(fill.size)
+                                filled_price = float(fill.price)
+                                total_filled += filled_size
+                                total_value_filled += filled_price * filled_size
+                                
+                                # Update maker/taker counts
+                                if hasattr(fill, 'liquidity_indicator'):
+                                    if fill.liquidity_indicator == 'M':
+                                        twap_info['maker_orders'] += 1
+                                    else:
+                                        twap_info['taker_orders'] += 1
+                                
+                                # Update fees
+                                fee = float(fill.fee) if hasattr(fill, 'fee') else 0
+                                twap_info['total_fees'] += fee
+                except Exception as e:
+                    logging.error(f"Error processing fills: {str(e)}")
+                    continue
+
+            # Update TWAP info with latest totals
             twap_info['total_filled'] = total_filled
             twap_info['total_value_filled'] = total_value_filled
 
-            # Display order data
+            # Display comprehensive order summary
+            print("\nTWAP Order Details:")
+            headers = ["Order ID", "Status", "Filled Size", "Avg Fill Price", "Value"]
             order_data = []
+            
             for order_id in unique_order_ids:
                 status = order_statuses.get(order_id, {})
                 order_status = status.get('status', 'UNKNOWN')
                 filled_size = status.get('filled_size', 0)
-                filled_value = filled_size * status.get('price', 0)
+                avg_price = status.get('average_filled_price', 0)
+                filled_value = filled_size * avg_price
                 
                 order_data.append([
                     order_id[:8] + "...",
+                    order_status,
                     f"{filled_size:.8f}",
-                    f"${filled_value:.2f}",
-                    order_status
+                    f"${avg_price:.2f}",
+                    f"${filled_value:.2f}"
                 ])
 
-            print("\nTWAP Order Details:")
-            print(tabulate(order_data, headers=["Order ID", "Filled Size", "USD Value Filled", "Status"], tablefmt="grid"))
+            print(tabulate(order_data, headers=headers, tablefmt="grid"))
 
+            # Display execution statistics
+            print("\nExecution Statistics:")
             if twap_info['total_value_placed'] > 0:
-                fill_percentage = (twap_info['total_value_filled'] / twap_info['total_value_placed']) * 100
-                print(f"\nTotal Percentage Value Filled: {fill_percentage:.2f}%")
+                completion_rate = (total_value_filled / twap_info['total_value_placed']) * 100
+                print(f"Completion Rate: {completion_rate:.2f}%")
             
-            self.display_twap_summary(twap_id)
+            if twap_info['maker_orders'] + twap_info['taker_orders'] > 0:
+                total_orders = twap_info['maker_orders'] + twap_info['taker_orders']
+                maker_pct = (twap_info['maker_orders'] / total_orders) * 100
+                print(f"Maker/Taker Split: {maker_pct:.1f}% maker")
+            
+            if twap_info['total_fees'] > 0:
+                fee_bps = (twap_info['total_fees'] / total_value_filled) * 10000 if total_value_filled > 0 else 0
+                print(f"Total Fees: ${twap_info['total_fees']:.2f} ({fee_bps:.1f} bps)")
 
         except Exception as e:
             logging.error(f"Error checking TWAP fills: {str(e)}")
