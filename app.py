@@ -25,14 +25,30 @@ def setup_logging():
     # Generate log filename with timestamp
     log_filename = f'logs/trading_terminal_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-        handlers=[
-            logging.FileHandler(log_filename),
-            logging.StreamHandler()
-        ]
-    )
+    # Create a formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s')
+
+    # Get the root logger
+    root_logger = logging.getLogger()
+    
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Setup file handler (keeps DEBUG level)
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+
+    # Setup console handler (only shows INFO and above)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.ERROR)
+    console_handler.setFormatter(formatter)
+
+    # Configure root logger
+    root_logger.setLevel(logging.DEBUG)  # Allow all logs to be processed
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
     
     # Log the start of the session
     logging.info("="*50)
@@ -924,7 +940,7 @@ class TradingTerminal:
                 raise ValueError("API key or secret not found")
 
             logging.debug("Initializing REST client")
-            self.client = RESTClient(api_key=api_key, api_secret=api_secret, verbose=True)
+            self.client = RESTClient(api_key=api_key, api_secret=api_secret, verbose=False)
             
             logging.debug("Waiting for rate limiter")
             self.rate_limiter.wait()
