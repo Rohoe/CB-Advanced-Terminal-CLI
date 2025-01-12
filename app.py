@@ -948,7 +948,7 @@ class TradingTerminal:
             logging.debug("Making test authentication request")
             test_response = self.client.get_accounts()
             
-            # logging.debug(f"Authentication response received: {test_response}")
+            logging.debug(f"Authentication response received: {test_response}")
             
             # Access test_response.accounts which should be a list
             if not hasattr(test_response, 'accounts'):
@@ -1478,88 +1478,6 @@ class TradingTerminal:
                 'status': 'Error',
                 'error': str(e)
             }
-
-    def place_adaptive_twap_order(self):
-        """Place an Adaptive Time-Weighted Average Price (TWAP) order."""
-        if not self.client:
-            logging.warning("Attempt to place Adaptive TWAP order without login")
-            print("Please login first.")
-            return
-
-        order_input = self.get_order_input()
-        if not order_input:
-            return
-
-        duration = int(input("Enter Adaptive TWAP duration in minutes: "))
-        num_slices = int(input("Enter number of slices for Adaptive TWAP: "))
-
-        slice_size = order_input["base_size"] / num_slices
-        slice_interval = duration * 60 / num_slices
-
-        logging.info(f"Starting Adaptive TWAP order: {order_input['product_id']}, {order_input['side']}, "
-                     f"Total Size: {order_input['base_size']}, Slices: {num_slices}, Duration: {duration} minutes")
-
-        print(f"\nAdaptive TWAP Order Details:")
-        print(f"Duration: {duration} minutes")
-        print(f"Number of Slices: {num_slices}")
-        print(f"Initial Size per Slice: {slice_size}")
-        print(f"Interval between Slices: {slice_interval} seconds")
-
-        confirm = input("\nDo you want to execute this Adaptive TWAP order? (yes/no): ").lower()
-        if confirm != 'yes':
-            logging.info("Adaptive TWAP order cancelled by user")
-            print("Adaptive TWAP order cancelled.")
-            return
-
-        executed_quantity = 0
-        start_time = time.time()
-
-        for i in range(num_slices):
-            try:
-                product_info = self.client.get_product(order_input["product_id"])
-                current_price = float(product_info['price'])  # Direct dictionary access
-                
-                # Adjust slice size based on price difference
-                price_difference = abs(current_price - order_input["limit_price"]) / order_input["limit_price"]
-                adjusted_slice_size = slice_size * (1 + price_difference)
-                
-                if (order_input["side"] == 'BUY' and current_price < order_input["limit_price"]) or \
-                   (order_input["side"] == 'SELL' and current_price > order_input["limit_price"]):
-                    adjusted_slice_size *= 1.2  # Increase size if price is favorable
-                
-                adjusted_slice_size = min(adjusted_slice_size, order_input["base_size"] - executed_quantity)
-                
-                order_response = self.client.market_order(
-                    client_order_id=f"adaptive-twap-{int(time.time())}-{i}",
-                    product_id=order_input["product_id"],
-                    side=order_input["side"],
-                    base_size=str(adjusted_slice_size)
-                )
-                
-                # Check for successful order placement
-                if 'success_response' in order_response or 'order_id' in order_response:
-                    logging.info(f"Adaptive TWAP slice {i+1}/{num_slices} executed. "
-                               f"Size: {adjusted_slice_size}, Price: {current_price}")
-                    print(f"Adaptive TWAP slice {i+1}/{num_slices} executed. "
-                          f"Size: {adjusted_slice_size}, Price: {current_price}")
-                    executed_quantity += adjusted_slice_size
-                else:
-                    logging.error(f"Failed to place Adaptive TWAP slice {i+1}. Response: {order_response}")
-                    print(f"Failed to place Adaptive TWAP slice {i+1}")
-
-            except Exception as e:
-                logging.error(f"Error executing Adaptive TWAP slice {i+1}: {str(e)}")
-                print(f"Error executing Adaptive TWAP slice {i+1}: {str(e)}")
-
-            if i < num_slices - 1:
-                sleep_time = max(CONFIG['twap_slice_delay'], 
-                               slice_interval - ((time.time() - start_time) % slice_interval))
-                logging.info(f"Waiting {sleep_time:.2f} seconds before next slice...")
-                print(f"Waiting {sleep_time:.2f} seconds before next slice...")
-                time.sleep(sleep_time)
-
-        logging.info(f"Adaptive TWAP order execution completed. Total executed: {executed_quantity}")
-        print(f"Adaptive TWAP order execution completed. Total executed: {executed_quantity}")
 
     def round_size(self, size, product_id):
         """Round order size to appropriate precision for the product."""
