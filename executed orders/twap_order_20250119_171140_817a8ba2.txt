@@ -1,0 +1,42 @@
+TWAP Order Execution Summary
+==================================================
+
+Order Details:
+TWAP ID: 817a8ba2-009a-49ad-9c8e-d377b27e6f7c
+Market: BTC-USDC
+Side: SELL
+Start Time: 2025-01-19 17:11:32.713771
+----------------------------------------
+
+Execution Statistics:
+Total Orders Placed: 7
+Total Amount Filled: 0.00000000
+Total Value Filled: $0.00
+Completion Rate: 0.00%
+
+Individual Order Details:
+----------------------------------------
+
+Order ID: df97aec4-7817-4b29-b5c7-cb15d17c7beb
+Status: FILLED
+Filled Size: 0.08657233
+Average Fill Price: $102770.49
+Fees: $14.24
+
+Order ID: 0f24c619-3215-466a-9640-e7a3fed7ae3a
+Status: FILLED
+Filled Size: 0.08657233
+Average Fill Price: $102701.77
+Fees: $14.23
+
+Order ID: d074b8c2-2317-4964-8708-2b1fe6e00c3f
+Status: FILLED
+Filled Size: 0.08657233
+Average Fill Price: $102676.86
+Fees: $14.22
+Error retrieving order details: 404 Client Error: Not Found {"error":"NOT_FOUND","error_details":"order with this orderID was not found","message":"order with this orderID was not found"}
+Error retrieving order details: 404 Client Error: Not Found {"error":"NOT_FOUND","error_details":"order with this orderID was not found","message":"order with this orderID was not found"}
+Error retrieving order details: 404 Client Error: Not Found {"error":"NOT_FOUND","error_details":"order with this orderID was not found","message":"order with this orderID was not found"}
+Error retrieving order details: 404 Client Error: Not Found {"error":"NOT_FOUND","error_details":"order with this orderID was not found","message":"order with this orderID was not found"}
+
+Slice Statistics:
