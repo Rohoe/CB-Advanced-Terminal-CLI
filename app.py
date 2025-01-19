@@ -472,14 +472,58 @@ class TradingTerminal:
                     break
                 print("Invalid side. Please enter 'buy' or 'sell'.")
 
-            # Get current prices
-            logging.debug(f"Fetching current prices for {product_id}")
+            # Get current prices and show balances
             current_prices = self.get_current_prices(product_id)
+            base_currency = product_id.split('-')[0]
+            quote_currency = product_id.split('-')[1]
+
+            # Get balances with rate limiting
+            logging.debug(f"Fetching balances for {base_currency} and {quote_currency}")
+            self.rate_limiter.wait()
+            base_balance = self.get_account_balance(base_currency)
+            self.rate_limiter.wait()
+            quote_balance = self.get_account_balance(quote_currency)
+            
+            print("\nCurrent Market Conditions:")
+            print("=" * 50)
+
             if current_prices:
-                print(f"\nCurrent market prices for {product_id}:")
+                print(f"Current prices for {product_id}:")
                 print(f"Bid: ${current_prices['bid']:.2f}")
                 print(f"Ask: ${current_prices['ask']:.2f}")
                 print(f"Mid: ${current_prices['mid']:.2f}")
+                print("-" * 50)
+
+                try:
+                    if side == 'BUY':
+                        potential_size = quote_balance / current_prices['ask']  # Use ask price for buying
+                        print(f"Available {quote_currency}: {quote_balance:.2f}")
+                        print(f"Maximum {base_currency} you can buy at current ask: {potential_size:.8f}")
+                        
+                        # Show example trade sizes at different percentages
+                        print("\nExample trade sizes:")
+                        percentages = [25, 50, 75, 100]
+                        for pct in percentages:
+                            size = (potential_size * pct) / 100
+                            cost = size * current_prices['ask']
+                            print(f"{pct}% - Size: {size:.8f} {base_currency} (Cost: ${cost:.2f} {quote_currency})")
+                    else:  # SELL
+                        potential_value = base_balance * current_prices['bid']  # Use bid price for selling
+                        print(f"Available {base_currency}: {base_balance:.8f}")
+                        print(f"Total value at current bid: ${potential_value:.2f}")
+                        
+                        # Show example trade sizes at different percentages
+                        print("\nExample trade sizes:")
+                        percentages = [25, 50, 75, 100]
+                        for pct in percentages:
+                            size = (base_balance * pct) / 100
+                            value = size * current_prices['bid']
+                            print(f"{pct}% - Size: {size:.8f} {base_currency} (Value: ${value:.2f} {quote_currency})")
+                    
+                    print("=" * 50)
+                except Exception as e:
+                    logging.error(f"Error calculating trade sizes: {str(e)}")
+                    print("\nError calculating trade sizes. Proceeding with order placement.")
 
             # Get limit price
             while True:
