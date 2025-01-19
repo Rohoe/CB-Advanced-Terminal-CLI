@@ -1101,62 +1101,75 @@ class TradingTerminal:
         logging.debug("Order status checker thread shutting down")
 
     def place_twap_order(self):
-        """Place a Time-Weighted Average Price (TWAP) order with comprehensive logging."""
+        """Place a Time-Weighted Average Price (TWAP) order with optional randomization."""
         if not self.client:
             logging.warning("Attempt to place TWAP order without login")
             print("Please login first.")
             return
 
-        logging.info("=" * 50)
-        logging.info("STARTING NEW TWAP ORDER")
-        logging.info("=" * 50)
-
+        # Get basic order parameters
         order_input = self.get_order_input()
         if not order_input:
             return
 
-        # Get account balances
-        base_currency = order_input["product_id"].split('-')[0]
-        quote_currency = order_input["product_id"].split('-')[1]
-        base_balance = self.get_account_balance(base_currency)
-        quote_balance = self.get_account_balance(quote_currency)
-        
-        logging.info(f"Account Balances:")
-        logging.info(f"{base_currency} Balance: {base_balance:.8f}")
-        logging.info(f"{quote_currency} Balance: {quote_balance:.8f}")
-
+        # Get TWAP specific parameters
         duration = int(input("Enter TWAP duration in minutes: "))
         num_slices = int(input("Enter number of slices for TWAP: "))
 
-        # Get product information for validation
-        try:
-            product_info = self.client.get_product(order_input["product_id"])
-            min_size = float(product_info['base_min_size'])  # Direct dictionary access
-            max_size = float(product_info['base_max_size'])  # Direct dictionary access
-            quote_increment = float(product_info['quote_increment'])  # Direct dictionary access
-            
-            logging.info(f"Product Constraints:")
-            logging.info(f"Minimum Order Size: {min_size} {base_currency}")
-            logging.info(f"Maximum Order Size: {max_size} {base_currency}")
-            logging.info(f"Price Increment: {quote_increment} {quote_currency}")
-            
-            # Validate slice size
-            slice_size = order_input["base_size"] / num_slices
-            if slice_size < min_size:
-                logging.error(f"Calculated slice size {slice_size} is below minimum {min_size}")
-                print(f"Error: Slice size {slice_size} is below minimum {min_size}")
-                return
-        except Exception as e:
-            logging.error(f"Error fetching product information: {str(e)}")
-            print(f"Error fetching product information: {str(e)}")
-            return
+        # Get randomization preferences
+        print("\nRandomization Options:")
+        print("1. No randomization (standard TWAP)")
+        print("2. Use randomization for timing and size")
+        
+        randomization_choice = input("Enter your choice (1-2): ")
+        
+        randomization_config = {
+            'enabled': False,
+            'time_randomization': 0,
+            'size_randomization': 0
+        }
 
-        print("\nSelect price type for order placement:")
-        print("1. Original limit price")
-        print("2. Current market bid")
-        print("3. Current market mid")
-        print("4. Current market ask")
-        price_type = input("Enter your choice (1-4): ")
+        if randomization_choice == '2':
+            randomization_config['enabled'] = True
+            while True:
+                try:
+                    time_rand = float(input("Enter timing randomization percentage (5-25%): "))
+                    if 5 <= time_rand <= 25:
+                        randomization_config['time_randomization'] = time_rand / 100
+                        break
+                    print("Please enter a value between 5 and 25")
+                except ValueError:
+                    print("Please enter a valid number")
+
+            while True:
+                try:
+                    size_rand = float(input("Enter size randomization percentage (5-20%): "))
+                    if 5 <= size_rand <= 20:
+                        randomization_config['size_randomization'] = size_rand / 100
+                        break
+                    print("Please enter a value between 5 and 20")
+                except ValueError:
+                    print("Please enter a valid number")
+
+        # Show execution plan
+        print("\nTWAP Execution Plan:")
+        print(f"Total Size: {order_input['base_size']} {order_input['product_id'].split('-')[0]}")
+        print(f"Duration: {duration} minutes")
+        print(f"Number of Slices: {num_slices}")
+        
+        if randomization_config['enabled']:
+            print("\nRandomization Settings:")
+            print(f"Timing Variation: ±{randomization_config['time_randomization']*100}%")
+            print(f"Size Variation: ±{randomization_config['size_randomization']*100}%")
+            avg_slice_size = order_input['base_size'] / num_slices
+            min_slice = avg_slice_size * (1 - randomization_config['size_randomization'])
+            max_slice = avg_slice_size * (1 + randomization_config['size_randomization'])
+            print(f"Slice Size Range: {min_slice:.8f} to {max_slice:.8f}")
+
+        confirm = input("\nProceed with TWAP execution? (yes/no): ")
+        if confirm.lower() != 'yes':
+            print("TWAP order cancelled.")
+            return
 
         # Create TWAP ID and initialize tracking
         twap_id = str(uuid.uuid4())
@@ -1175,183 +1188,70 @@ class TradingTerminal:
             'maker_orders': 0,
             'taker_orders': 0,
             'slice_statuses': [],
-            'price_skips': 0,
-            'balance_skips': 0,
-            'other_failures': 0
+            'randomization_config': randomization_config
         }
 
-        # Log TWAP configuration
-        logging.info("\nTWAP Configuration:")
-        logging.info(f"TWAP ID: {twap_id}")
-        logging.info(f"Market: {order_input['product_id']}")
-        logging.info(f"Side: {order_input['side']}")
-        logging.info(f"Total Size: {order_input['base_size']} {base_currency}")
-        logging.info(f"Slice Size: {slice_size} {base_currency}")
-        logging.info(f"Limit Price: {order_input['limit_price']} {quote_currency}")
-        logging.info(f"Duration: {duration} minutes")
-        logging.info(f"Number of Slices: {num_slices}")
-        logging.info(f"Interval between slices: {(duration * 60) / num_slices:.2f} seconds")
-
         slice_interval = (duration * 60) / num_slices
+        remaining_size = order_input['base_size']
+        remaining_slices = num_slices
         next_slice_time = time.time()
 
         try:
             for i in range(num_slices):
-                slice_start_time = time.time()
-                slice_info = {
-                    'slice_number': i + 1,
-                    'start_time': slice_start_time,
-                    'status': 'pending'
-                }
+                if randomization_config['enabled']:
+                    # Randomize timing
+                    time_offset = random.uniform(
+                        -slice_interval * randomization_config['time_randomization'],
+                        slice_interval * randomization_config['time_randomization']
+                    )
+                    adjusted_next_slice = next_slice_time + time_offset
+                    
+                    # Calculate randomized slice size
+                    if i < num_slices - 1:
+                        base_slice_size = remaining_size / remaining_slices
+                        size_offset = random.uniform(
+                            -base_slice_size * randomization_config['size_randomization'],
+                            base_slice_size * randomization_config['size_randomization']
+                        )
+                        slice_size = base_slice_size + size_offset
+                        slice_size = min(slice_size, remaining_size * 0.95)
+                    else:
+                        slice_size = remaining_size
+                else:
+                    adjusted_next_slice = next_slice_time
+                    slice_size = remaining_size / remaining_slices
 
+                # Wait until next slice time
                 current_time = time.time()
-                if current_time < next_slice_time:
-                    sleep_time = next_slice_time - current_time
+                if current_time < adjusted_next_slice:
+                    sleep_time = adjusted_next_slice - current_time
                     if sleep_time > 0:
                         logging.info(f"Waiting {sleep_time:.2f} seconds until next slice...")
                         print(f"Waiting {sleep_time:.2f} seconds until next slice...")
                         time.sleep(sleep_time)
 
+                # Update timing and size tracking
                 next_slice_time = time.time() + slice_interval
-
-                # Check available balance
-                if order_input["side"] == "SELL":
-                    available_balance = self.get_account_balance(base_currency)
-                    if available_balance < slice_size:
-                        msg = f"Insufficient {base_currency} balance for slice {i+1}. Required: {slice_size}, Available: {available_balance}"
-                        logging.error(msg)
-                        print(msg)
-                        slice_info['status'] = 'balance_insufficient'
-                        self.twap_orders[twap_id]['balance_skips'] += 1
-                        continue
-
-                # Get current prices with detailed logging
-                current_prices = self.get_current_prices(order_input["product_id"])
-                if not current_prices:
-                    logging.error(f"Failed to get current prices for slice {i+1}/{num_slices}")
-                    print(f"Failed to get current prices for slice {i+1}/{num_slices}")
-                    slice_info['status'] = 'price_fetch_failed'
-                    self.twap_orders[twap_id]['other_failures'] += 1
-                    continue
-
-                # Log market conditions
-                logging.info(f"\nSlice {i+1}/{num_slices} Market Conditions:")
-                logging.info(f"Time: {datetime.now().strftime('%H:%M:%S')}")
-                logging.info(f"Bid: ${current_prices['bid']:.2f}")
-                logging.info(f"Mid: ${current_prices['mid']:.2f}")
-                logging.info(f"Ask: ${current_prices['ask']:.2f}")
-                logging.info(f"Spread: ${(current_prices['ask'] - current_prices['bid']):.3f}")
-
-                # Determine execution price
-                if price_type == '1':
-                    execution_price = order_input["limit_price"]
-                    price_source = "limit price"
-                elif price_type == '2':
-                    execution_price = current_prices['bid']
-                    price_source = "market bid"
-                elif price_type == '3':
-                    execution_price = current_prices['mid']
-                    price_source = "market mid"
-                else:
-                    execution_price = current_prices['ask']
-                    price_source = "market ask"
-
-                logging.info(f"Selected execution price: ${execution_price:.2f} (source: {price_source})")
-                logging.info(f"User limit price: ${order_input['limit_price']:.2f}")
-                
-                slice_info['execution_price'] = execution_price
-                slice_info['market_prices'] = current_prices
-
-                # Price favorability check
-                if order_input["side"] == "BUY":
-                    price_favorable = execution_price <= order_input["limit_price"]
-                    comparison = "above" if not price_favorable else "below or at"
-                else:  # SELL
-                    price_favorable = execution_price >= order_input["limit_price"]
-                    comparison = "below" if not price_favorable else "above or at"
-
-                if not price_favorable:
-                    msg = f"Skipping slice {i+1}/{num_slices}: Price ${execution_price:.2f} is {comparison} limit ${order_input['limit_price']:.2f}"
-                    logging.warning(msg)
-                    print(msg)
-                    slice_info['status'] = 'price_unfavorable'
-                    self.twap_orders[twap_id]['price_skips'] += 1
-                    continue
+                remaining_size -= slice_size
+                remaining_slices -= 1
 
                 # Place the slice
-                try:
-                    order_response = self.place_limit_order_with_retry(
-                        product_id=order_input["product_id"],
-                        side=order_input["side"],
-                        base_size=str(slice_size),
-                        limit_price=str(execution_price),
-                        client_order_id=f"twap-{twap_id}-{i}-{int(time.time())}"
-                    )
-
-                    slice_info['order_response'] = order_response
-                    
-                    if order_response:
-                        order_id = order_response['order_id'] if 'order_id' in order_response else \
-                                 order_response['success_response']['order_id']
-                        
-                        self.twap_orders[twap_id]['orders'].append(order_id)
-                        self.twap_orders[twap_id]['total_placed'] += slice_size
-                        self.twap_orders[twap_id]['total_value_placed'] += (slice_size * execution_price)
-                        self.order_to_twap_map[order_id] = twap_id
-
-                        slice_info['status'] = 'placed'
-                        slice_info['order_id'] = order_id
-                        
-                        logging.info(f"TWAP slice {i+1}/{num_slices} placed successfully:")
-                        logging.info(f"Order ID: {order_id}")
-                        logging.info(f"Size: {slice_size} {base_currency}")
-                        logging.info(f"Price: ${execution_price:.2f} {quote_currency}")
-                        print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_id}")
-                    else:
-                        error_msg = f"Failed to place TWAP slice {i+1}/{num_slices}"
-                        if isinstance(order_response, dict) and 'error_response' in order_response:
-                            error_msg += f": {order_response['error_response']}"
-                        logging.error(error_msg)
-                        print(error_msg)
-                        slice_info['status'] = 'placement_failed'
-                        self.twap_orders[twap_id]['other_failures'] += 1
-
-                except Exception as e:
-                    error_msg = f"Error placing TWAP slice {i+1}/{num_slices}: {str(e)}"
-                    logging.error(error_msg)
-                    print(error_msg)
-                    slice_info['status'] = 'error'
-                    slice_info['error'] = str(e)
-                    self.twap_orders[twap_id]['other_failures'] += 1
-
-                slice_info['end_time'] = time.time()
-                slice_info['duration'] = slice_info['end_time'] - slice_info['start_time']
-                self.twap_orders[twap_id]['slice_statuses'].append(slice_info)
+                slice_result = self.place_twap_slice(twap_id, i+1, num_slices, 
+                                                order_input, slice_size)
                 
+                if slice_result:
+                    logging.info(f"Placed slice {i+1}/{num_slices} with size {slice_size:.8f}")
+                else:
+                    logging.warning(f"Failed to place slice {i+1}/{num_slices}")
+
                 self.display_twap_progress(twap_id, i+1, num_slices)
 
         except Exception as e:
             logging.error(f"Error during TWAP execution: {str(e)}")
             print(f"Error during TWAP execution: {str(e)}")
-
         finally:
-            end_time = time.time()
-            execution_time = end_time - self.twap_orders[twap_id]['start_time']
-            
-            logging.info("\nTWAP Execution Summary:")
-            logging.info(f"Total execution time: {execution_time:.2f} seconds")
-            logging.info(f"Price-based skips: {self.twap_orders[twap_id]['price_skips']}")
-            logging.info(f"Balance-based skips: {self.twap_orders[twap_id]['balance_skips']}")
-            logging.info(f"Other failures: {self.twap_orders[twap_id]['other_failures']}")
-            
-            self.twap_orders[twap_id]['status'] = 'completed'
-            self.display_twap_summary(twap_id, show_orders=False)
-            
-            logging.info("=" * 50)
-            logging.info("TWAP ORDER COMPLETED")
-            logging.info("=" * 50)
-            
-        return twap_id
+            self.display_twap_summary(twap_id)
+            return twap_id
 
     def check_twap_order_fills(self, twap_id):
         """Check fills for a specific TWAP order and display summary."""
