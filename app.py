@@ -640,24 +640,33 @@ class TradingTerminal:
             batch_size = 50
             for i in range(0, len(order_ids), batch_size):
                 batch_order_ids = order_ids[i:i + batch_size]
-                fills = self.check_order_fills_batch(batch_order_ids)
-
-                # Update TWAP tracking with fill information
-                for order_id, fill_info in fills.items():
-                    twap_info['total_filled'] += fill_info['filled_size']
-                    twap_info['total_value_filled'] += fill_info['filled_value']
-                    twap_info['total_fees'] += fill_info['fees']
+                
+                for order_id in batch_order_ids:
+                    self.rate_limiter.wait()
+                    order_response = self.client.get_order(order_id)
                     
-                    if fill_info['is_maker']:
-                        twap_info['maker_orders'] += 1
-                    else:
-                        twap_info['taker_orders'] += 1
+                    if hasattr(order_response, 'order'):
+                        order = order_response.order
+                        filled_size = float(order.filled_size) if hasattr(order, 'filled_size') else 0
                         
-                    # Store order-specific fill data
-                    twap_info[f'filled_{order_id}'] = fill_info['filled_size']
-                    twap_info[f'price_{order_id}'] = fill_info['average_price']
+                        if filled_size > 0:
+                            fees = float(order.total_fees)
+                            avg_price = float(order.average_filled_price)
+                            filled_value = filled_size * avg_price
+                            
+                            twap_info['total_filled'] += filled_size
+                            twap_info['total_value_filled'] += filled_value
+                            twap_info['total_fees'] += fees
+                            
+                            logging.debug(f"Order {order_id} fees: ${fees:.2f}, "
+                                        f"filled_size: {filled_size:.8f}, "
+                                        f"avg_price: ${avg_price:.2f}, "
+                                        f"filled_value: ${filled_value:.2f}")
 
-            logging.info(f"Updated TWAP {twap_id} fills: {twap_info['total_filled']} units filled")
+            logging.info(f"Updated TWAP {twap_id} fills: "
+                        f"{twap_info['total_filled']:.8f} units filled, "
+                        f"value: ${twap_info['total_value_filled']:.2f}, "
+                        f"fees: ${twap_info['total_fees']:.2f}")
             return True
 
         except Exception as e:
@@ -1641,7 +1650,7 @@ class TradingTerminal:
             print("No orders placed in this TWAP execution")
             return
 
-        # Calculate open order statistics
+        # Calculate order statistics
         open_orders = []
         open_size = 0
         open_value = 0
@@ -1653,16 +1662,18 @@ class TradingTerminal:
             try:
                 self.rate_limiter.wait()
                 order_response = self.client.get_order(order_id)
+                
                 if hasattr(order_response, 'order'):
                     order = order_response.order
                     
-                    # Track fills and fees
-                    if hasattr(order, 'filled_size') and hasattr(order, 'average_filled_price'):
-                        filled_size = float(order.filled_size)
+                    # Track fills and fees - using the required fields from the API schema
+                    filled_size = float(order.filled_size) if hasattr(order, 'filled_size') else 0
+                    if filled_size > 0:
                         avg_price = float(order.average_filled_price)
                         total_filled_size += filled_size
                         total_filled_value += filled_size * avg_price
-                        total_fees += float(order.total_fees) if hasattr(order, 'total_fees') else 0
+                        # The total_fees field is required in the API response
+                        total_fees += float(order.total_fees)
 
                     # Track open orders
                     if order.status in ['PENDING', 'OPEN']:
@@ -1688,22 +1699,23 @@ class TradingTerminal:
         print("-" * 50)
         print(f"Total Orders Placed: {total_orders}")
         print(f"Total Value Placed: ${twap_info['total_value_placed']:.2f}")
-        print(f"Total Amount Filled: {total_filled_size:.8f}")
-        print(f"Total Value Filled: ${total_filled_value:.2f}")
+        
+        if total_filled_size > 0:
+            print(f"Total Amount Filled: {total_filled_size:.8f}")
+            print(f"Total Value Filled: ${total_filled_value:.2f}")
+            
+            fee_percentage = (total_fees / total_filled_value) * 100 if total_filled_value > 0 else 0
+            print(f"\nFee Analysis:")
+            print(f"Total Fees Paid: ${total_fees:.2f}")
+            print(f"Fees as % of Filled Value: {fee_percentage:.3f}%")
+            
+            completion_rate = (total_filled_value / twap_info['total_value_placed']) * 100 if twap_info['total_value_placed'] > 0 else 0
+            print(f"\nCompletion Rate: {completion_rate:.2f}%")
         
         if open_orders:
             print(f"\nOpen Orders: {len(open_orders)}")
             print(f"Open Amount: {open_size:.8f}")
             print(f"Open Value: ${open_value:.2f}")
-        
-        if total_filled_value > 0:
-            fee_percentage = (total_fees / total_filled_value) * 100
-            print(f"\nFee Analysis:")
-            print(f"Total Fees Paid: ${total_fees:.2f}")
-            print(f"Fees as % of Filled Value: {fee_percentage:.3f}%")
-            
-            completion_rate = (total_filled_value / twap_info['total_value_placed']) * 100
-            print(f"\nCompletion Rate: {completion_rate:.2f}%")
 
     def display_all_twap_orders(self):
         """Display list of all TWAP orders with basic statistics."""
