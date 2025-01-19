@@ -1251,6 +1251,11 @@ class TradingTerminal:
             print(f"Error during TWAP execution: {str(e)}")
         finally:
             self.display_twap_summary(twap_id)
+            # Save execution summary to file
+            self.save_twap_summary(twap_id)
+            logging.info("=" * 50)
+            logging.info("TWAP ORDER COMPLETED")
+            logging.info("=" * 50)
             return twap_id
 
     def check_twap_order_fills(self, twap_id):
@@ -1642,6 +1647,101 @@ class TradingTerminal:
                 print(f"   Pending Orders: {status_info['pending_orders']}")
                 
             print("-" * 100)    
+
+    def save_twap_summary(self, twap_id):
+        """Save TWAP order execution summary to a file.
+        
+        Args:
+            twap_id: The ID of the completed TWAP order
+        """
+        if twap_id not in self.twap_orders:
+            logging.warning(f"TWAP order {twap_id} not found")
+            return False
+            
+        twap_info = self.twap_orders[twap_id]
+        
+        # Create executed orders directory if it doesn't exist
+        output_dir = "executed orders"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            
+        # Generate filename with timestamp and TWAP ID
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{output_dir}/twap_order_{timestamp}_{twap_id[:8]}.txt"
+        
+        try:
+            with open(filename, 'w') as f:
+                f.write("TWAP Order Execution Summary\n")
+                f.write("=" * 50 + "\n\n")
+                
+                # Order Details
+                f.write("Order Details:\n")
+                f.write(f"TWAP ID: {twap_id}\n")
+                f.write(f"Market: {twap_info['market']}\n")
+                f.write(f"Side: {twap_info['side']}\n")
+                f.write(f"Start Time: {datetime.fromtimestamp(twap_info['start_time'])}\n")
+                f.write("-" * 40 + "\n\n")
+                
+                # Execution Statistics
+                f.write("Execution Statistics:\n")
+                f.write(f"Total Orders Placed: {len(twap_info['orders'])}\n")
+                
+                if twap_info['total_value_placed'] > 0:
+                    completion_rate = (twap_info['total_value_filled'] / twap_info['total_value_placed']) * 100
+                    f.write(f"Total Amount Filled: {twap_info['total_filled']:.8f}\n")
+                    f.write(f"Total Value Filled: ${twap_info['total_value_filled']:.2f}\n")
+                    f.write(f"Completion Rate: {completion_rate:.2f}%\n")
+                
+                if twap_info['maker_orders'] + twap_info['taker_orders'] > 0:
+                    total_executed = twap_info['maker_orders'] + twap_info['taker_orders']
+                    maker_pct = (twap_info['maker_orders'] / total_executed) * 100
+                    f.write(f"\nOrder Execution Type:\n")
+                    f.write(f"Maker Orders: {twap_info['maker_orders']}\n")
+                    f.write(f"Taker Orders: {twap_info['taker_orders']}\n")
+                    f.write(f"Maker Percentage: {maker_pct:.1f}%\n")
+                
+                if twap_info['total_fees'] > 0:
+                    fee_bps = (twap_info['total_fees'] / twap_info['total_value_filled']) * 10000
+                    f.write(f"\nFee Analysis:\n")
+                    f.write(f"Total Fees: ${twap_info['total_fees']:.2f}\n")
+                    f.write(f"Fee Impact: {fee_bps:.1f} bps of executed value\n")
+                
+                # Individual Order Details
+                f.write("\nIndividual Order Details:\n")
+                f.write("-" * 40 + "\n")
+                
+                for order_id in twap_info['orders']:
+                    try:
+                        order_response = self.client.get_order(order_id)
+                        if hasattr(order_response, 'order'):
+                            order = order_response.order
+                            f.write(f"\nOrder ID: {order_id}\n")
+                            f.write(f"Status: {order.status}\n")
+                            
+                            if hasattr(order, 'filled_size'):
+                                f.write(f"Filled Size: {order.filled_size}\n")
+                            if hasattr(order, 'average_filled_price'):
+                                f.write(f"Average Fill Price: ${float(order.average_filled_price):.2f}\n")
+                            if hasattr(order, 'total_fees'):
+                                f.write(f"Fees: ${float(order.total_fees):.2f}\n")
+                    except Exception as e:
+                        logging.error(f"Error getting details for order {order_id}: {str(e)}")
+                        f.write(f"Error retrieving order details: {str(e)}\n")
+                    
+                # Summary Statistics
+                f.write("\nSlice Statistics:\n")
+                f.write(f"Price-based skips: {twap_info['price_skips']}\n")
+                f.write(f"Balance-based skips: {twap_info['balance_skips']}\n")
+                f.write(f"Other failures: {twap_info['other_failures']}\n")
+                
+            logging.info(f"TWAP summary saved to {filename}")
+            print(f"\nTWAP execution summary saved to {filename}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error saving TWAP summary: {str(e)}")
+            print(f"Error saving TWAP summary: {str(e)}")
+            return False
 
     def run(self):
         """Main execution loop for the trading terminal."""
