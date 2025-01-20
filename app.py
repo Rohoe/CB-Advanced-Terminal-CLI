@@ -1,3 +1,5 @@
+from typing import Optional, Dict, List
+from twap_tracker import TWAPTracker, TWAPOrder, OrderFill
 import math
 import logging
 from keys import Keys
@@ -151,6 +153,9 @@ class TradingTerminal:
             self.fill_cache = {}
             self.fill_cache_time = 0
             self.fill_cache_ttl = 5
+
+            #initialize TWAP Tracker
+            self.twap_tracker = TWAPTracker()
             
             logging.info("TradingTerminal initialization completed successfully")
             
@@ -619,51 +624,111 @@ class TradingTerminal:
         finally:
             logging.debug("Exiting place_limit_order function")
 
-    def update_twap_fills(self, twap_id):
-        """Update fill information for a TWAP order using consolidated fill checking."""
-        if twap_id not in self.twap_orders:
-            logging.warning(f"TWAP order {twap_id} not found")
-            return
-
-        twap_info = self.twap_orders[twap_id]
-        order_ids = twap_info['orders']
-
-        # Reset accumulated values to prevent double-counting
-        twap_info['total_filled'] = 0.0
-        twap_info['total_value_filled'] = 0.0
-        twap_info['total_fees'] = 0.0
-        twap_info['maker_orders'] = 0
-        twap_info['taker_orders'] = 0
-
+    def update_twap_fills(self, twap_id: str) -> bool:
+        """Update fill information for a TWAP order with fee calculations."""
         try:
-            # Process orders in batches to respect rate limits
-            batch_size = 50
-            for i in range(0, len(order_ids), batch_size):
-                batch_order_ids = order_ids[i:i + batch_size]
-                fills = self.check_order_fills_batch(batch_order_ids)
+            # Get the TWAP order
+            twap_order = self.twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                logging.warning(f"TWAP order {twap_id} not found")
+                return False
 
-                # Update TWAP tracking with fill information
-                for order_id, fill_info in fills.items():
-                    twap_info['total_filled'] += fill_info['filled_size']
-                    twap_info['total_value_filled'] += fill_info['filled_value']
-                    twap_info['total_fees'] += fill_info['fees']
+            # Get current fee rates from transaction summary
+            try:
+                fee_info = self.client.get_transaction_summary()
+                if hasattr(fee_info, 'fee_tier') and isinstance(fee_info.fee_tier, dict):
+                    fee_tier = fee_info.fee_tier
+                    maker_rate = float(fee_tier.get('maker_fee_rate', '0.004'))
+                    taker_rate = float(fee_tier.get('taker_fee_rate', '0.006'))
+                    logging.info(f"Current fee rates - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
+                else:
+                    logging.warning("Unable to get fee tier info, using default rates")
+                    maker_rate = 0.004  # 0.4%
+                    taker_rate = 0.006  # 0.6%
+            except Exception as e:
+                logging.error(f"Error getting fee rates: {str(e)}")
+                maker_rate = 0.004
+                taker_rate = 0.006
+
+            # Get fills for all orders
+            fills = []
+            total_filled = 0.0
+            total_value_filled = 0.0
+            total_fees = 0.0
+            maker_orders = 0
+            taker_orders = 0
+
+            for order_id in twap_order.orders:
+                try:
+                    # Rate limit handling
+                    self.rate_limiter.wait()
                     
-                    if fill_info['is_maker']:
-                        twap_info['maker_orders'] += 1
-                    else:
-                        twap_info['taker_orders'] += 1
-                        
-                    # Store order-specific fill data
-                    twap_info[f'filled_{order_id}'] = fill_info['filled_size']
-                    twap_info[f'price_{order_id}'] = fill_info['average_price']
+                    order_fills = self.client.get_fills(order_ids=[order_id])
+                    if not hasattr(order_fills, 'fills'):
+                        continue
 
-            logging.info(f"Updated TWAP {twap_id} fills: {twap_info['total_filled']} units filled")
+                    for fill in order_fills.fills:
+                        is_maker = getattr(fill, 'liquidity_indicator', '') == 'MAKER'
+                        fill_size = float(fill.size)
+                        fill_price = float(fill.price)
+                        fill_value = fill_size * fill_price
+                        
+                        # Calculate fee based on maker/taker status
+                        fee = fill_value * (maker_rate if is_maker else taker_rate)
+                        
+                        fills.append(OrderFill(
+                            order_id=fill.order_id,
+                            trade_id=fill.trade_id,
+                            filled_size=fill_size,
+                            price=fill_price,
+                            fee=fee,
+                            is_maker=is_maker,
+                            trade_time=fill.trade_time
+                        ))
+                        
+                        # Update totals
+                        total_filled += fill_size
+                        total_value_filled += fill_value
+                        total_fees += fee
+                        if is_maker:
+                            maker_orders += 1
+                        else:
+                            taker_orders += 1
+
+                except Exception as e:
+                    logging.error(f"Error processing fills for order {order_id}: {str(e)}")
+                    continue
+
+            # Save updated fills
+            self.twap_tracker.save_twap_fills(twap_id, fills)
+
+            # Update TWAP order status
+            twap_order.total_filled = total_filled
+            twap_order.total_value_filled = total_value_filled
+            twap_order.total_fees = total_fees
+            twap_order.maker_orders = maker_orders
+            twap_order.taker_orders = taker_orders
+
+            if total_filled >= twap_order.total_size:
+                twap_order.status = 'completed'
+            elif total_filled > 0:
+                twap_order.status = 'partially_filled'
+
+            self.twap_tracker.save_twap_order(twap_order)
+            
+            # Log update summary
+            logging.info(f"Updated TWAP {twap_id} fills:")
+            logging.info(f"Total filled: {total_filled:.8f}")
+            logging.info(f"Total value: ${total_value_filled:.2f}")
+            logging.info(f"Total fees: ${total_fees:.2f}")
+            logging.info(f"Maker/Taker ratio: {maker_orders}/{taker_orders}")
+
             return True
 
         except Exception as e:
             logging.error(f"Error updating TWAP fills: {str(e)}")
             return False
-
+        
     def place_limit_order_with_retry(self, product_id, side, base_size, limit_price, client_order_id=None):
         """Place a limit order with enhanced error handling and validation."""
         logging.debug("Entering place_limit_order_with_retry")
@@ -718,9 +783,7 @@ class TradingTerminal:
             try:
                 logging.debug(f"Received response from Coinbase API: {order_response}")
                 logging.debug(f"Response type: {type(order_response)}")
-                
-                print("hello1")
-                
+                                
                 if order_response:
                     logging.debug("order_response exists")
                     
@@ -736,7 +799,6 @@ class TradingTerminal:
                         logging.error(f"Order placement failed: {error_msg}")
                         return None
                 
-                print("hello2")
                 logging.error(f"Unexpected order response format: {order_response}")
                 logging.debug("Exiting place_limit_order_with_retry with failure")
                 return None
@@ -750,66 +812,75 @@ class TradingTerminal:
             logging.debug("Exiting place_limit_order_with_retry with exception")
             return None
 
-    def place_twap_slice(self, twap_id, slice_number, total_slices, order_input, execution_price):
+    def place_twap_slice(self, twap_id: str, slice_number: int, total_slices: int, 
+                        order_input: dict, execution_price: float) -> Optional[str]:
         """Place a single TWAP slice with comprehensive error handling."""
         try:
-            twap_info = self.twap_orders[twap_id]
-            total_target = float(order_input["base_size"])
-            total_placed = twap_info['total_placed']
-            remaining_quantity = total_target - total_placed
-            
+            twap_order = self.twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                logging.error(f"TWAP order {twap_id} not found")
+                return None
+
             # Calculate slice size
+            total_target = float(order_input["base_size"])
+            total_placed = sum(1 for _ in twap_order.orders)
+            remaining_quantity = total_target - total_placed
+
             if slice_number == total_slices:
                 slice_size = remaining_quantity
             else:
-                slice_size = order_input["base_size"] / total_slices
-                
+                slice_size = total_target / total_slices
+
             # Validate minimum slice size
             product_info = self.client.get_product(order_input["product_id"])
-            min_size = float(product_info['base_min_size'])  # Direct dictionary access
+            min_size = float(product_info['base_min_size'])
             
-            if slice_size < min_size:
-                logging.warning(f"Slice size {slice_size} is below minimum {min_size}. Adjusting to minimum.")
-                slice_size = min_size
+            # Round size and price to appropriate precision
+            rounded_size = self.round_size(slice_size, order_input["product_id"])
+            rounded_price = self.round_price(execution_price, order_input["product_id"])
+            
+            if rounded_size < min_size:
+                logging.warning(f"Slice size {rounded_size} is below minimum {min_size}. Adjusting to minimum.")
+                rounded_size = min_size
 
-            # Place the order
+            # Generate unique client order ID
             client_order_id = f"twap-{twap_id}-{slice_number}-{int(time.time())}"
+
+            # Place the order with retry
             order_response = self.place_limit_order_with_retry(
                 product_id=order_input["product_id"],
                 side=order_input["side"],
-                base_size=slice_size,
-                limit_price=execution_price,
+                base_size=str(rounded_size),
+                limit_price=str(rounded_price),
                 client_order_id=client_order_id
             )
-            
+
             if not order_response:
-                self.twap_orders[twap_id]['failed_slices'].add(slice_number)
-                if slice_number < total_slices:
-                    remaining_slices = total_slices - slice_number
-                    self.twap_orders[twap_id]['slice_size_adjustment'] = slice_size / remaining_slices
+                logging.error("Failed to place slice order")
                 return None
-                
-            # Extract order ID using direct dictionary access
-            order_id = order_response['success_response']['order_id'] if 'success_response' in order_response else order_response['order_id']
-            
-            if order_id:
-                self.twap_orders[twap_id]['orders'].append(order_id)
-                self.twap_orders[twap_id]['total_placed'] += float(slice_size)
-                self.twap_orders[twap_id]['total_value_placed'] += (
-                    float(slice_size) * float(execution_price)
-                )
-                self.order_to_twap_map[order_id] = twap_id
-                
-                logging.info(f"TWAP slice {slice_number}/{total_slices} placed successfully. Order ID: {order_id}")
-                return order_id
-            
-            logging.error(f"Failed to extract order ID from response: {order_response}")
-            self.twap_orders[twap_id]['failed_slices'].add(slice_number)
-            return None
-            
+
+            # Extract order ID using dot notation or dict access as appropriate
+            if isinstance(order_response, dict):
+                order_id = (order_response.get('success_response', {}).get('order_id') or 
+                        order_response.get('order_id'))
+            else:
+                order_id = (getattr(order_response.success_response, 'order_id', None) if 
+                        hasattr(order_response, 'success_response') else 
+                        getattr(order_response, 'order_id', None))
+
+            if not order_id:
+                logging.error("Could not extract order ID from response")
+                return None
+
+            logging.info(f"Successfully placed slice {slice_number}/{total_slices}")
+            logging.info(f"Order ID: {order_id}")
+            logging.info(f"Size: {rounded_size}")
+            logging.info(f"Price: {rounded_price}")
+
+            return order_id
+
         except Exception as e:
-            logging.error(f"Error placing TWAP slice {slice_number}: {str(e)}")
-            self.twap_orders[twap_id]['failed_slices'].add(slice_number)
+            logging.error(f"Error placing TWAP slice: {str(e)}")
             return None
 
     def get_active_orders(self):
@@ -1096,7 +1167,7 @@ class TradingTerminal:
         if not self.client:
             logging.warning("Attempt to place TWAP order without login")
             print("Please login first.")
-            return
+            return None
 
         logging.info("=" * 50)
         logging.info("STARTING NEW TWAP ORDER")
@@ -1104,7 +1175,7 @@ class TradingTerminal:
 
         order_input = self.get_order_input()
         if not order_input:
-            return
+            return None
 
         # Get account balances
         base_currency = order_input["product_id"].split('-')[0]
@@ -1122,9 +1193,9 @@ class TradingTerminal:
         # Get product information for validation
         try:
             product_info = self.client.get_product(order_input["product_id"])
-            min_size = float(product_info['base_min_size'])  # Direct dictionary access
-            max_size = float(product_info['base_max_size'])  # Direct dictionary access
-            quote_increment = float(product_info['quote_increment'])  # Direct dictionary access
+            min_size = float(product_info['base_min_size'])
+            max_size = float(product_info['base_max_size'])
+            quote_increment = float(product_info['quote_increment'])
             
             logging.info(f"Product Constraints:")
             logging.info(f"Minimum Order Size: {min_size} {base_currency}")
@@ -1132,15 +1203,15 @@ class TradingTerminal:
             logging.info(f"Price Increment: {quote_increment} {quote_currency}")
             
             # Validate slice size
-            slice_size = order_input["base_size"] / num_slices
+            slice_size = float(order_input["base_size"]) / num_slices
             if slice_size < min_size:
                 logging.error(f"Calculated slice size {slice_size} is below minimum {min_size}")
                 print(f"Error: Slice size {slice_size} is below minimum {min_size}")
-                return
+                return None
         except Exception as e:
             logging.error(f"Error fetching product information: {str(e)}")
             print(f"Error fetching product information: {str(e)}")
-            return
+            return None
 
         print("\nSelect price type for order placement:")
         print("1. Original limit price")
@@ -1151,25 +1222,22 @@ class TradingTerminal:
 
         # Create TWAP ID and initialize tracking
         twap_id = str(uuid.uuid4())
-        self.twap_orders[twap_id] = {
-            'orders': [],
-            'total_placed': 0,
-            'total_filled': 0,
-            'total_value_placed': 0,
-            'total_value_filled': 0,
-            'start_time': time.time(),
-            'failed_slices': set(),
-            'status': 'active',
-            'market': order_input['product_id'],
-            'side': order_input['side'],
-            'total_fees': 0,
-            'maker_orders': 0,
-            'taker_orders': 0,
-            'slice_statuses': [],
-            'price_skips': 0,
-            'balance_skips': 0,
-            'other_failures': 0
-        }
+        twap_order = TWAPOrder(
+            twap_id=twap_id,
+            market=order_input["product_id"],
+            side=order_input["side"],
+            total_size=float(order_input["base_size"]),
+            limit_price=float(order_input["limit_price"]),
+            num_slices=num_slices,
+            start_time=datetime.now().isoformat(),
+            status="active",
+            orders=[],
+            failed_slices=[],
+            slice_statuses=[]
+        )
+        
+        # Save initial TWAP order state
+        self.twap_tracker.save_twap_order(twap_order)
 
         # Log TWAP configuration
         logging.info("\nTWAP Configuration:")
@@ -1213,7 +1281,7 @@ class TradingTerminal:
                         logging.error(msg)
                         print(msg)
                         slice_info['status'] = 'balance_insufficient'
-                        self.twap_orders[twap_id]['balance_skips'] += 1
+                        twap_order.failed_slices.append(i+1)
                         continue
 
                 # Get current prices with detailed logging
@@ -1222,7 +1290,7 @@ class TradingTerminal:
                     logging.error(f"Failed to get current prices for slice {i+1}/{num_slices}")
                     print(f"Failed to get current prices for slice {i+1}/{num_slices}")
                     slice_info['status'] = 'price_fetch_failed'
-                    self.twap_orders[twap_id]['other_failures'] += 1
+                    twap_order.failed_slices.append(i+1)
                     continue
 
                 # Log market conditions
@@ -1235,7 +1303,7 @@ class TradingTerminal:
 
                 # Determine execution price
                 if price_type == '1':
-                    execution_price = order_input["limit_price"]
+                    execution_price = float(order_input["limit_price"])
                     price_source = "limit price"
                 elif price_type == '2':
                     execution_price = current_prices['bid']
@@ -1248,17 +1316,16 @@ class TradingTerminal:
                     price_source = "market ask"
 
                 logging.info(f"Selected execution price: ${execution_price:.2f} (source: {price_source})")
-                logging.info(f"User limit price: ${order_input['limit_price']:.2f}")
                 
                 slice_info['execution_price'] = execution_price
                 slice_info['market_prices'] = current_prices
 
                 # Price favorability check
                 if order_input["side"] == "BUY":
-                    price_favorable = execution_price <= order_input["limit_price"]
+                    price_favorable = execution_price <= float(order_input["limit_price"])
                     comparison = "above" if not price_favorable else "below or at"
                 else:  # SELL
-                    price_favorable = execution_price >= order_input["limit_price"]
+                    price_favorable = execution_price >= float(order_input["limit_price"])
                     comparison = "below" if not price_favorable else "above or at"
 
                 if not price_favorable:
@@ -1266,30 +1333,15 @@ class TradingTerminal:
                     logging.warning(msg)
                     print(msg)
                     slice_info['status'] = 'price_unfavorable'
-                    self.twap_orders[twap_id]['price_skips'] += 1
+                    twap_order.failed_slices.append(i+1)
                     continue
 
-                # Place the slice
+                # Place the slice order
                 try:
-                    order_response = self.place_limit_order_with_retry(
-                        product_id=order_input["product_id"],
-                        side=order_input["side"],
-                        base_size=str(slice_size),
-                        limit_price=str(execution_price),
-                        client_order_id=f"twap-{twap_id}-{i}-{int(time.time())}"
-                    )
-
-                    slice_info['order_response'] = order_response
+                    order_id = self.place_twap_slice(twap_id, i+1, num_slices, order_input, execution_price)
                     
-                    if order_response:
-                        order_id = order_response['order_id'] if 'order_id' in order_response else \
-                                 order_response['success_response']['order_id']
-                        
-                        self.twap_orders[twap_id]['orders'].append(order_id)
-                        self.twap_orders[twap_id]['total_placed'] += slice_size
-                        self.twap_orders[twap_id]['total_value_placed'] += (slice_size * execution_price)
-                        self.order_to_twap_map[order_id] = twap_id
-
+                    if order_id:
+                        twap_order.orders.append(order_id)
                         slice_info['status'] = 'placed'
                         slice_info['order_id'] = order_id
                         
@@ -1297,15 +1349,23 @@ class TradingTerminal:
                         logging.info(f"Order ID: {order_id}")
                         logging.info(f"Size: {slice_size} {base_currency}")
                         logging.info(f"Price: ${execution_price:.2f} {quote_currency}")
-                        print(f"TWAP slice {i+1}/{num_slices} placed. Order ID: {order_id}")
+                        
+                        # Calculate slice value
+                        slice_value = slice_size * execution_price
+                        
+                        # Enhanced progress update with order details
+                        print(f"\nOrder to {order_input['side'].lower()} {slice_size} {base_currency} " 
+                            f"with value ${slice_value:.2f} placed successfully")
+                        print(f"\nTWAP Progress Update:")
+                        print(f"Slices Placed: {len(twap_order.orders)}/{num_slices}")
+                        if twap_order.failed_slices:
+                            print(f"Failed Slices: {len(twap_order.failed_slices)}")
+                        
                     else:
-                        error_msg = f"Failed to place TWAP slice {i+1}/{num_slices}"
-                        if isinstance(order_response, dict) and 'error_response' in order_response:
-                            error_msg += f": {order_response['error_response']}"
-                        logging.error(error_msg)
-                        print(error_msg)
                         slice_info['status'] = 'placement_failed'
-                        self.twap_orders[twap_id]['other_failures'] += 1
+                        twap_order.failed_slices.append(i+1)
+                        logging.error(f"Failed to place TWAP slice {i+1}/{num_slices}")
+                        print(f"Failed to place TWAP slice {i+1}/{num_slices}")
 
                 except Exception as e:
                     error_msg = f"Error placing TWAP slice {i+1}/{num_slices}: {str(e)}"
@@ -1313,51 +1373,59 @@ class TradingTerminal:
                     print(error_msg)
                     slice_info['status'] = 'error'
                     slice_info['error'] = str(e)
-                    self.twap_orders[twap_id]['other_failures'] += 1
+                    twap_order.failed_slices.append(i+1)
 
                 slice_info['end_time'] = time.time()
                 slice_info['duration'] = slice_info['end_time'] - slice_info['start_time']
-                self.twap_orders[twap_id]['slice_statuses'].append(slice_info)
+                twap_order.slice_statuses.append(slice_info)
                 
-                self.display_twap_progress(twap_id, i+1, num_slices)
+                # Save updated TWAP order state after each slice
+                self.twap_tracker.save_twap_order(twap_order)
 
-        except Exception as e:
-            logging.error(f"Error during TWAP execution: {str(e)}")
-            print(f"Error during TWAP execution: {str(e)}")
-
-        finally:
-            end_time = time.time()
-            execution_time = end_time - self.twap_orders[twap_id]['start_time']
+            # Final update and display
+            twap_order.status = 'completed'
+            self.twap_tracker.save_twap_order(twap_order)
             
-            logging.info("\nTWAP Execution Summary:")
-            logging.info(f"Total execution time: {execution_time:.2f} seconds")
-            logging.info(f"Price-based skips: {self.twap_orders[twap_id]['price_skips']}")
-            logging.info(f"Balance-based skips: {self.twap_orders[twap_id]['balance_skips']}")
-            logging.info(f"Other failures: {self.twap_orders[twap_id]['other_failures']}")
-            
-            self.twap_orders[twap_id]['status'] = 'completed'
+            # Update final fill information before showing summary
+            self.update_twap_fills(twap_id)
             self.display_twap_summary(twap_id)
             
             logging.info("=" * 50)
             logging.info("TWAP ORDER COMPLETED")
             logging.info("=" * 50)
             
-        return twap_id
+            return twap_id
+
+        except Exception as e:
+            logging.error(f"Error in TWAP order execution: {str(e)}")
+            if twap_order:
+                twap_order.status = 'error'
+                self.twap_tracker.save_twap_order(twap_order)
+            return None
 
     def check_twap_order_fills(self, twap_id):
         """Check fills for a specific TWAP order and display summary."""
-        if twap_id not in self.twap_orders:
-            print(f"TWAP order {twap_id} not found.")
-            return
+        try:
+            # Get TWAP order from tracker
+            twap_order = self.twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                logging.warning(f"TWAP order {twap_id} not found")
+                print(f"TWAP order {twap_id} not found.")
+                return
 
-        logging.info(f"Checking fills for TWAP order {twap_id}")
-        
-        # Update fill information
-        if self.update_twap_fills(twap_id):
-            # Display updated summary
-            self.display_twap_summary(twap_id, show_orders=True)
-        else:
-            print("Error checking TWAP fills. Please try again.")
+            logging.info(f"Checking fills for TWAP order {twap_id}")
+            print(f"\nChecking fills for TWAP order {twap_id}...")
+            
+            # Update fill information
+            if self.update_twap_fills(twap_id):
+                # Display updated summary with detailed order information
+                self.display_twap_summary(twap_id, show_orders=True)
+            else:
+                print("Error checking TWAP fills. Please try again.")
+
+        except Exception as e:
+            logging.error(f"Error checking TWAP fills: {str(e)}")
+            print("Error checking TWAP fills. Please check the logs for details.")
 
     def get_twap_status(self, twap_id):
         """Get comprehensive status of a TWAP order execution."""
@@ -1607,167 +1675,210 @@ class TradingTerminal:
             print(f"Error getting order input: {str(e)}")
             return None
 
-    def display_twap_progress(self, twap_id, current_slice, total_slices):
+    def display_twap_progress(self, twap_id: str):
         """Display current progress of TWAP order execution."""
-        if twap_id not in self.twap_orders:
-            logging.warning(f"TWAP order {twap_id} not found")
-            return
-            
-        twap_info = self.twap_orders[twap_id]
-        
-        print("\nTWAP Order Progress:")
-        print(f"Market: {twap_info['market']}")
-        print(f"Side: {twap_info['side']}")
-        print(f"Progress: {current_slice}/{total_slices} slices")
-        print(f"Total Orders Placed: {len(twap_info['orders'])}")
-        
-        if twap_info['total_value_placed'] > 0:
-            print(f"Total Value Placed: ${twap_info['total_value_placed']:.2f}")
-            
-        if twap_info['total_filled'] > 0:
-            print(f"Total Amount Filled: {twap_info['total_filled']:.8f}")
-            print(f"Total Value Filled: ${twap_info['total_value_filled']:.2f}")
+        try:
+            twap_order = self.twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                logging.warning(f"TWAP order {twap_id} not found")
+                return
 
-    def display_twap_summary(self, twap_id, show_orders=True):
-        """Display comprehensive summary of TWAP order execution.
-        
-        Args:
-            twap_id: The ID of the TWAP order
-            show_orders: Whether to display individual order details table
-        """
-        if twap_id not in self.twap_orders:
-            logging.warning(f"TWAP order {twap_id} not found")
-            return
+            stats = self.twap_tracker.calculate_twap_statistics(twap_id)
             
-        twap_info = self.twap_orders[twap_id]
-        total_orders = len(twap_info['orders'])
-        
-        if total_orders == 0:
-            print("No orders placed in this TWAP execution")
-            return
+            print("\nTWAP Order Progress:")
+            print(f"Market: {twap_order.market}")
+            print(f"Side: {twap_order.side}")
+            print(f"Status: {twap_order.status}")
+            print("-" * 50)
+            
+            # Order progress
+            completion_pct = (twap_order.total_filled / twap_order.total_size * 100) if twap_order.total_size > 0 else 0
+            print(f"Total Size: {twap_order.total_size:.8f}")
+            print(f"Amount Filled: {twap_order.total_filled:.8f}")
+            print(f"Completion: {completion_pct:.1f}%")
+            
+            # Value and fees
+            if twap_order.total_value_filled > 0:
+                print(f"\nExecution Value: ${twap_order.total_value_filled:.2f}")
+                print(f"Total Fees: ${twap_order.total_fees:.2f}")
+                fee_bps = (twap_order.total_fees / twap_order.total_value_filled) * 10000
+                print(f"Fee Impact: {fee_bps:.1f} bps")
 
-        # Display individual order details if requested
-        if show_orders:
-            headers = ["Order ID", "Status", "Filled Size", "Avg Fill Price", "Value"]
-            order_data = []
-            
-            for order_id in twap_info['orders']:
-                try:
-                    self.rate_limiter.wait()
-                    order_response = self.client.get_order(order_id)
-                    if hasattr(order_response, 'order'):
-                        order = order_response.order
-                        filled_size = float(order.filled_size) if hasattr(order, 'filled_size') else 0
-                        avg_price = float(order.average_filled_price) if hasattr(order, 'average_filled_price') else 0
-                        filled_value = filled_size * avg_price
-                        
-                        order_data.append([
-                            order_id[:8] + "...",
-                            order.status,
-                            f"{filled_size:.8f}",
-                            f"${avg_price:.2f}",
-                            f"${filled_value:.2f}"
-                        ])
-                except Exception as e:
-                    logging.error(f"Error getting order details for {order_id}: {str(e)}")
-                    continue
-            
-            print("\nTWAP Order Details:")
-            print(tabulate(order_data, headers=headers, tablefmt="grid"))
+            # Execution quality
+            if stats.get('vwap'):
+                print(f"\nExecution Quality:")
+                print(f"VWAP: ${stats['vwap']:.2f}")
+                if 'slippage' in stats:
+                    print(f"Slippage: {stats['slippage']:.2f}%")
+                if 'execution_speed' in stats:
+                    print(f"Execution Speed: {stats['execution_speed']:.1f}%/hour")
 
-        # Display execution statistics
-        print("\nExecution Statistics:")
-        print(f"Market: {twap_info['market']}")
-        print(f"Order Side: {twap_info['side']}")
-        print("-" * 50)
-        if twap_info['total_value_placed'] > 0:
-            completion_rate = (twap_info['total_value_filled'] / twap_info['total_value_placed']) * 100
+            # Order breakdown
+            total_orders = twap_order.maker_orders + twap_order.taker_orders
+            if total_orders > 0:
+                maker_pct = (twap_order.maker_orders / total_orders) * 100
+                print(f"\nOrder Analysis:")
+                print(f"Total Orders: {total_orders}")
+                print(f"Maker Orders: {twap_order.maker_orders}")
+                print(f"Taker Orders: {twap_order.taker_orders}")
+                print(f"Maker Ratio: {maker_pct:.1f}%")
+
+            if twap_order.failed_slices:
+                print(f"\nFailed Slices: {len(twap_order.failed_slices)}")
+
+            print("\n" + "=" * 50)
+
+        except Exception as e:
+            logging.error(f"Error displaying TWAP progress: {str(e)}")
+            print("Error displaying TWAP progress. Check logs for details.")
+
+    def display_twap_summary(self, twap_id: str, show_orders: bool = True):
+        """Display comprehensive TWAP order summary using saved data."""
+        try:
+            twap_order = self.twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                print(f"No data found for TWAP order {twap_id}")
+                return
+
+            stats = self.twap_tracker.calculate_twap_statistics(twap_id)
+            fills = self.twap_tracker.get_twap_fills(twap_id)
             
-            # Calculate open order statistics
-            open_size = 0
-            open_value = 0
-            for order_id in twap_info['orders']:
-                if order_id not in self.filled_orders:
-                    try:
-                        self.rate_limiter.wait()
-                        order_response = self.client.get_order(order_id)
-                        if hasattr(order_response, 'order'):
-                            order = order_response.order
-                            if order.status in ['PENDING', 'OPEN']:
-                                config = order.order_configuration
-                                config_type = next(iter(vars(config)))
-                                order_config = getattr(config, config_type)
-                                
-                                # Get size and calculate value
-                                if hasattr(order_config, 'base_size'):
-                                    size = float(order_config.base_size)
-                                    price = float(order_config.limit_price)
-                                    open_size += size
-                                    open_value += size * price
-                    except Exception as e:
-                        logging.error(f"Error getting open order details for {order_id}: {str(e)}")
-                        continue
+            print("\nTWAP Order Summary:")
+            print("=" * 80)
+            print(f"TWAP ID: {twap_id}")
+            print(f"Market: {twap_order.market}")
+            print(f"Side: {twap_order.side}")
+            print(f"Status: {twap_order.status}")
+            print("-" * 80)
             
-            print(f"Filled Amount: {twap_info['total_filled']:.8f}")
-            print(f"Filled Value: ${twap_info['total_value_filled']:.2f}")
-            if open_size > 0:
-                print(f"Open Amount: {open_size:.8f}")
-                print(f"Open Value: ${open_value:.2f}")
-            print(f"Completion Rate: {completion_rate:.2f}%")
-        
-        if twap_info['maker_orders'] + twap_info['taker_orders'] > 0:
-            total_executed = twap_info['maker_orders'] + twap_info['taker_orders']
-            maker_pct = (twap_info['maker_orders'] / total_executed) * 100
-            print(f"\nOrder Execution:")
-            print(f"Maker Orders: {twap_info['maker_orders']}")
-            print(f"Taker Orders: {twap_info['taker_orders']}")
-            print(f"Maker Percentage: {maker_pct:.1f}%")
-        
-        if twap_info['total_fees'] > 0:
-            fee_bps = (twap_info['total_fees'] / twap_info['total_value_filled']) * 10000 if twap_info['total_value_filled'] > 0 else 0
-            print(f"\nFee Analysis:")
-            print(f"Total Fees: ${twap_info['total_fees']:.2f}")
-            print(f"Fee Impact: {fee_bps:.1f} bps of executed value")
+            # Basic statistics
+            completion_rate = (twap_order.total_filled / twap_order.total_size * 100) if twap_order.total_size > 0 else 0
+            print("\nExecution Summary:")
+            print(f"Total Size: {twap_order.total_size:.8f}")
+            print(f"Amount Filled: {twap_order.total_filled:.8f}")
+            print(f"Completion Rate: {completion_rate:.1f}%")
+            
+            # Value and fees
+            if twap_order.total_value_filled > 0:
+                print(f"\nValue Summary:")
+                print(f"Total Value: ${twap_order.total_value_filled:.2f}")
+                print(f"Average Price: ${stats.get('vwap', 0):.2f}")
+                print(f"Total Fees: ${twap_order.total_fees:.2f}")
+                fee_bps = (twap_order.total_fees / twap_order.total_value_filled) * 10000
+                print(f"Fee Impact: {fee_bps:.1f} bps")
+
+            # Execution quality metrics
+            if 'slippage' in stats:
+                print(f"\nExecution Quality:")
+                print(f"VWAP: ${stats['vwap']:.2f}")
+                print(f"Price Slippage: {stats['slippage']:.2f}%")
+                if 'price_range' in stats:
+                    print(f"Price Range: ${stats['price_range']:.2f}")
+                if 'execution_duration' in stats:
+                    duration_mins = stats['execution_duration'] / 60
+                    print(f"Execution Duration: {duration_mins:.1f} minutes")
+                    print(f"Execution Speed: {stats['execution_speed']:.1f}%/hour")
+
+            # Order type breakdown
+            total_orders = twap_order.maker_orders + twap_order.taker_orders
+            if total_orders > 0:
+                maker_pct = (twap_order.maker_orders / total_orders) * 100
+                print(f"\nOrder Analysis:")
+                print(f"Total Orders: {total_orders}")
+                print(f"Maker Orders: {twap_order.maker_orders}")
+                print(f"Taker Orders: {twap_order.taker_orders}")
+                print(f"Maker Percentage: {maker_pct:.1f}%")
+
+            # Failed slices
+            if twap_order.failed_slices:
+                print(f"\nExecution Issues:")
+                print(f"Failed Slices: {len(twap_order.failed_slices)}")
+                print(f"Failed Slice Numbers: {', '.join(map(str, twap_order.failed_slices))}")
+
+            # Detailed fill information
+            if show_orders and fills:
+                print("\nDetailed Fill Information:")
+                print("=" * 80)
+                headers = ["Time", "Order ID", "Size", "Price", "Value", "Fee", "Type"]
+                fill_data = []
+                
+                for fill in fills:
+                    fill_time = datetime.fromisoformat(fill.trade_time.replace('Z', '+00:00'))
+                    fill_value = fill.filled_size * fill.price
+                    order_id = fill.order_id[:8] + "..."  # Truncate for display
+                    fill_type = "Maker" if fill.is_maker else "Taker"
+                    
+                    fill_data.append([
+                        fill_time.strftime("%H:%M:%S"),
+                        order_id,
+                        f"{fill.filled_size:.8f}",
+                        f"${fill.price:.2f}",
+                        f"${fill_value:.2f}",
+                        f"${fill.fee:.2f}",
+                        fill_type
+                    ])
+                
+                print(tabulate(fill_data, headers=headers, tablefmt="grid"))
+
+        except Exception as e:
+            logging.error(f"Error displaying TWAP summary: {str(e)}")
+            print("Error displaying TWAP summary. Check logs for details.")
 
     def display_all_twap_orders(self):
         """Display comprehensive list of all TWAP orders with execution statistics."""
-        if not self.twap_orders:
-            print("No TWAP orders found")
-            return
-            
-        print("\nTWAP Orders:")
-        print("=" * 100)
-        
-        for i, (twap_id, info) in enumerate(self.twap_orders.items(), 1):
-            status_info = self.get_twap_status(twap_id)
-            
-            print(f"\n{i}. TWAP ID: {twap_id}")
-            print(f"   Market: {info['market']}")
-            print(f"   Side: {info['side']}")
-            print(f"   Status: {status_info['status']}")
-            print(f"   Orders: {status_info['filled_orders']}/{status_info['total_orders']} filled")
-            
-            if status_info['cancelled_orders'] > 0:
-                print(f"   Cancelled Orders: {status_info['cancelled_orders']}")
-            if status_info['pending_orders'] > 0:
-                print(f"   Pending Orders: {status_info['pending_orders']}")
+        try:
+            # Get list of all TWAP orders from tracker
+            twap_ids = self.twap_tracker.list_twap_orders()
+            if not twap_ids:
+                print("No TWAP orders found")
+                return
                 
-            if info['total_value_filled'] > 0:
-                print(f"   Total Value Filled: ${info['total_value_filled']:.2f}")
-                print(f"   Completion Rate: {status_info['completion_rate']:.1f}%")
+            print("\nTWAP Orders:")
+            print("=" * 100)
+            
+            for i, twap_id in enumerate(twap_ids, 1):
+                # Get order and stats from tracker
+                twap_order = self.twap_tracker.get_twap_order(twap_id)
+                if not twap_order:
+                    continue
+                    
+                stats = self.twap_tracker.calculate_twap_statistics(twap_id)
                 
-                # Show maker/taker split if orders are filled
-                if info['maker_orders'] + info['taker_orders'] > 0:
-                    total_executed = info['maker_orders'] + info['taker_orders']
-                    maker_pct = (info['maker_orders'] / total_executed * 100)
-                    print(f"   Maker/Taker: {maker_pct:.1f}% maker")
+                print(f"\n{i}. TWAP ID: {twap_id}")
+                print(f"   Market: {twap_order.market}")
+                print(f"   Side: {twap_order.side}")
+                print(f"   Status: {twap_order.status}")
+                print(f"   Orders: {len(twap_order.orders)} total")
+                
+                if twap_order.failed_slices:
+                    print(f"   Failed Slices: {len(twap_order.failed_slices)}")
                     
-                # Show fees if present
-                if info['total_fees'] > 0:
-                    fee_bps = (info['total_fees'] / info['total_value_filled']) * 10000
-                    print(f"   Total Fees: ${info['total_fees']:.2f} ({fee_bps:.1f} bps)")
+                if stats.get('total_value_filled', 0) > 0:
+                    print(f"   Total Value Filled: ${stats['total_value_filled']:.2f}")
+                    print(f"   Completion Rate: {stats['completion_rate']:.1f}%")
                     
-            print("-" * 100)
+                    # Show maker/taker split if fills exist
+                    maker_fills = stats.get('maker_fills', 0)
+                    taker_fills = stats.get('taker_fills', 0)
+                    if maker_fills + taker_fills > 0:
+                        maker_pct = (maker_fills / (maker_fills + taker_fills) * 100)
+                        print(f"   Maker/Taker: {maker_pct:.1f}% maker")
+                        
+                    # Show fees if present
+                    total_fees = stats.get('total_fees', 0)
+                    if total_fees > 0:
+                        fee_bps = (total_fees / stats['total_value_filled']) * 10000
+                        print(f"   Total Fees: ${total_fees:.2f} ({fee_bps:.1f} bps)")
+                        
+                    # Show VWAP if available
+                    if 'vwap' in stats:
+                        print(f"   VWAP: ${stats['vwap']:.2f}")
+                        
+                print("-" * 100)
+
+        except Exception as e:
+            logging.error(f"Error displaying TWAP orders: {str(e)}")
+            print("Error displaying TWAP orders. Please check the logs for details.")
 
     def run(self):
         """Main execution loop for the trading terminal."""

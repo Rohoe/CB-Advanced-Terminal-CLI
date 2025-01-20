@@ -163,3 +163,5 @@ cython_debug/
 
 #keys
 keys.py
+logs/
+twap_data/
