@@ -137,15 +137,23 @@ class TestAPIResponseHandling:
         # Create mock account objects
         mock_account1 = Mock()
         mock_account1.currency = 'BTC'
-        mock_account1.available_balance = Mock(value='1.5')
+        mock_account1.available_balance = {'value': '1.5', 'currency': 'BTC'}
+        mock_account1.type = 'CRYPTO'
+        mock_account1.ready = True
+        mock_account1.active = True
 
         mock_account2 = Mock()
         mock_account2.currency = 'USDC'
-        mock_account2.available_balance = Mock(value='50000.0')
+        mock_account2.available_balance = {'value': '50000.0', 'currency': 'USDC'}
+        mock_account2.type = 'CRYPTO'
+        mock_account2.ready = True
+        mock_account2.active = True
 
         # Mock response object
         mock_response = Mock()
         mock_response.accounts = [mock_account1, mock_account2]
+        mock_response.has_next = False  # No pagination
+        mock_response.cursor = ''
 
         mock_api_client.get_accounts.return_value = mock_response
 
@@ -414,10 +422,15 @@ class TestAccountCaching:
         # Create mock account
         mock_account = Mock()
         mock_account.currency = 'BTC'
-        mock_account.available_balance = Mock(value='1.5')
+        mock_account.available_balance = {'value': '1.5', 'currency': 'BTC'}
+        mock_account.type = 'CRYPTO'
+        mock_account.ready = True
+        mock_account.active = True
 
         mock_response = Mock()
         mock_response.accounts = [mock_account]
+        mock_response.has_next = False
+        mock_response.cursor = ''
         mock_api_client.get_accounts.return_value = mock_response
 
         terminal = TradingTerminal(
@@ -446,6 +459,8 @@ class TestAccountCaching:
         """Test that balance for nonexistent currency returns 0."""
         mock_response = Mock()
         mock_response.accounts = []
+        mock_response.has_next = False
+        mock_response.cursor = ''
         mock_api_client.get_accounts.return_value = mock_response
 
         terminal = TradingTerminal(
