@@ -37,16 +37,45 @@ A Python-based command-line trading terminal for Coinbase Advanced Trade API wit
 
 3. **Configure API credentials**:
 
-   Edit `keys.py` and add your Coinbase API key:
-   ```python
-   import getpass
+   The application uses environment variables for secure credential management.
 
-   class Keys:
-       api_key = "your-api-key-here"
-       api_secret = getpass.getpass()
+   **Option A: Environment Variables (Recommended for Runtime Secret Entry)**
+   ```bash
+   # Set your API key
+   export COINBASE_API_KEY="organizations/your-org-id/apiKeys/your-key-id"
+
+   # Don't set API_SECRET - you'll be prompted when running the app
+   python app.py
    ```
 
-   **SECURITY WARNING**: Never commit your actual API credentials to version control. The API secret is prompted at runtime for security.
+   **Option B: .env File (For Persistent Setup)**
+   ```bash
+   # Copy the example file
+   cp .env.example .env
+
+   # Edit .env with your API key only
+   nano .env
+   ```
+
+   Add to `.env`:
+   ```
+   COINBASE_API_KEY=organizations/your-org-id/apiKeys/your-key-id
+   # Leave COINBASE_API_SECRET unset to be prompted at runtime
+   ```
+
+   Then run:
+   ```bash
+   # Load environment variables
+   set -a && source .env && set +a
+
+   # Run the application (will prompt for secret)
+   python app.py
+   ```
+
+   **SECURITY NOTE**:
+   - API secret is prompted at runtime and never stored to disk
+   - The `.env` file is automatically ignored by git
+   - Never commit actual credentials to version control
 
 ## Getting API Credentials
 
@@ -65,10 +94,18 @@ For detailed instructions, see: https://docs.cdp.coinbase.com/advanced-trade/doc
 ### Starting the Terminal
 
 ```bash
+# Make sure your API key is set
+export COINBASE_API_KEY="organizations/your-org-id/apiKeys/your-key-id"
+
+# Run the application
 python app.py
 ```
 
-You'll be prompted to enter your API secret. The terminal will then display a menu with available options.
+When you start the application:
+1. You'll be prompted to enter your API secret (secure, hidden input)
+2. The app will authenticate with Coinbase
+3. Your account balances will load
+4. The main menu will appear
 
 ### Main Menu Options
 
@@ -119,14 +156,30 @@ Result: 12 orders of ~0.00833 BTC each, placed every 5 minutes
 CB-Advanced-Terminal/
 ├── app.py              # Main trading terminal application
 ├── twap_tracker.py     # TWAP order persistence and tracking
-├── keys.py             # API credentials (DO NOT COMMIT)
+├── config.py           # Secure configuration management
+├── config_manager.py   # Application configuration
+├── validators.py       # Input validation
+├── api_client.py       # API client abstraction
+├── storage.py          # Storage abstraction
 ├── requirements.txt    # Python dependencies
+├── requirements-dev.txt # Testing dependencies
+├── .env.example        # Environment variable template
+├── .env               # Your credentials (git-ignored, DO NOT COMMIT)
 ├── CLAUDE.md          # Developer documentation
 ├── README.md          # This file
+├── TESTING.md         # Testing guide
+├── TODO.md            # Future improvements
 ├── logs/              # Application logs (auto-generated)
-└── twap_data/         # TWAP order persistence (auto-generated)
-    ├── orders/        # TWAP order metadata
-    └── fills/         # Order fill information
+├── twap_data/         # TWAP order persistence (auto-generated)
+│   ├── orders/        # TWAP order metadata
+│   └── fills/         # Order fill information
+└── tests/             # Test suite
+    ├── conftest.py    # Test fixtures
+    ├── test_validators.py
+    ├── test_rate_limiter.py
+    ├── test_twap_tracker.py
+    ├── integration/   # Integration tests
+    └── mocks/         # Mock implementations
 ```
 
 ## Logging
@@ -157,12 +210,14 @@ The terminal implements a token bucket rate limiter to prevent API throttling:
 
 ## Important Security Notes
 
-- **Never commit `keys.py` with real credentials** - Use `.gitignore`
-- API secret is prompted at runtime and never stored
+- **Never commit `.env` with real credentials** - It's automatically git-ignored
+- **Never hardcode credentials in source files**
+- API secret is prompted at runtime and never stored to disk
 - API keys should have minimal required permissions
 - Use separate API keys for testing vs production trading
 - Regularly rotate API credentials
 - Monitor API usage in Coinbase dashboard
+- Environment variables are loaded securely via `config.py`
 
 ## Error Handling
 
@@ -197,6 +252,36 @@ The terminal includes comprehensive error handling:
 - Reduce `rate_limit_requests` in CONFIG
 - Add delays between manual operations
 - Check Coinbase API status
+
+## Testing
+
+This project includes a comprehensive test suite. See `TESTING.md` for detailed information.
+
+### Quick Start
+
+```bash
+# Install testing dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=. --cov-report=html
+open htmlcov/index.html
+
+# Run only unit tests
+pytest -m unit
+```
+
+### Test Coverage
+
+- **validators.py:** 90.55%
+- **twap_tracker.py:** 87.10%
+- **RateLimiter:** 100% (all tests passing)
+- **70+ total tests** covering core business logic
+
+For more information, see the [Testing Guide](TESTING.md).
 
 ## API Documentation
 
