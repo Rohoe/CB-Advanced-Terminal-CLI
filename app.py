@@ -63,6 +63,10 @@ def setup_logging():
 # Call setup_logging at the start
 setup_logging()
 
+class CancelledException(Exception):
+    """Exception raised when user cancels an operation."""
+    pass
+
 class RateLimiter:
     """
     Implements a token bucket rate limiter.
@@ -193,7 +197,33 @@ class TradingTerminal:
         except Exception as e:
             logging.critical(f"Failed to initialize TradingTerminal: {str(e)}", exc_info=True)
             raise
-    
+
+    def get_input(self, prompt, allow_cancel=True):
+        """
+        Get user input with optional cancellation support.
+
+        Args:
+            prompt: The prompt to display to the user
+            allow_cancel: If True, allows user to cancel by typing 'cancel', 'back', or 'q'
+
+        Returns:
+            The user's input string
+
+        Raises:
+            CancelledException: If user enters a cancel command and allow_cancel is True
+        """
+        if allow_cancel and "cancel" not in prompt.lower():
+            # Add cancel hint to prompt if not already present
+            prompt = prompt.rstrip() + " (or 'cancel' to go back): "
+
+        user_input = input(prompt).strip()
+
+        if allow_cancel and user_input.lower() in ['cancel', 'back', 'q', 'quit']:
+            logging.debug(f"User cancelled operation with input: {user_input}")
+            raise CancelledException("Operation cancelled by user")
+
+        return user_input
+
     def get_accounts(self, force_refresh=False):
         """Get account information with caching."""
         current_time = time.time()
@@ -504,7 +534,17 @@ class TradingTerminal:
             return
 
         logging.debug("Starting limit order placement")
-        
+
+        try:
+            # Outer try block to catch cancellations
+            return self._place_limit_order_impl()
+        except CancelledException:
+            logging.info("Limit order placement cancelled by user")
+            print("\nOrder placement cancelled. Returning to main menu.")
+            return None
+
+    def _place_limit_order_impl(self):
+        """Internal implementation of place_limit_order with cancellation support."""
         try:
             # Get market data
             logging.debug("Fetching market data")
@@ -523,7 +563,7 @@ class TradingTerminal:
             # Get market selection
             logging.debug("Getting market selection")
             while True:
-                product_choice = input("\nEnter the number of the market to trade (1-20): ")
+                product_choice = self.get_input("\nEnter the number of the market to trade (1-20)")
                 logging.debug(f"User selected market number: {product_choice}")
                 try:
                     index = int(product_choice)
@@ -544,7 +584,7 @@ class TradingTerminal:
                                 print(f"{i}. {quote}")
                                 
                             while True:
-                                quote_choice = input(f"Select quote currency (1-{len(available_quotes)}): ")
+                                quote_choice = self.get_input(f"Select quote currency (1-{len(available_quotes)})")
                                 logging.debug(f"User selected quote currency option: {quote_choice}")
                                 try:
                                     quote_index = int(quote_choice)
@@ -573,7 +613,7 @@ class TradingTerminal:
 
             # Get side
             while True:
-                side = input("\nEnter order side (buy/sell): ").upper()
+                side = self.get_input("\nEnter order side (buy/sell)").upper()
                 logging.debug(f"User selected side: {side}")
                 if side in ['BUY', 'SELL']:
                     break
@@ -635,7 +675,7 @@ class TradingTerminal:
             # Get limit price
             while True:
                 try:
-                    limit_price = float(input("\nEnter limit price: "))
+                    limit_price = float(self.get_input("\nEnter limit price"))
                     logging.debug(f"User entered limit price: {limit_price}")
                     if limit_price <= 0:
                         print("Price must be greater than 0.")
@@ -647,7 +687,7 @@ class TradingTerminal:
             # Get order size
             while True:
                 try:
-                    base_size = float(input("\nEnter order size: "))
+                    base_size = float(self.get_input("\nEnter order size"))
                     logging.debug(f"User entered base size: {base_size}")
                     if base_size <= 0:
                         print("Size must be greater than 0.")
@@ -670,9 +710,9 @@ class TradingTerminal:
                 total_value = base_size * limit_price
                 print(f"Total Value: ${total_value:.2f}")
 
-            confirm = input("\nDo you want to place this order? (yes/no): ").lower()
+            confirm = self.get_input("\nDo you want to place this order? (yes/no)").lower()
             logging.debug(f"User confirmation: {confirm}")
-            
+
             if confirm != 'yes':
                 logging.info("Order cancelled by user")
                 print("Order cancelled.")
@@ -1021,6 +1061,14 @@ class TradingTerminal:
             return
 
         try:
+            self._show_and_cancel_orders_impl()
+        except CancelledException:
+            logging.info("Show and cancel orders cancelled by user")
+            print("\nCancelled. Returning to main menu.")
+
+    def _show_and_cancel_orders_impl(self):
+        """Internal implementation of show_and_cancel_orders with cancellation support."""
+        try:
             active_orders = self.get_active_orders()
             
             if not active_orders:
@@ -1052,8 +1100,8 @@ class TradingTerminal:
             print(tabulate(table_data, headers=["Number", "Order ID", "Product", "Side", "Size", "Price", "Status"], tablefmt="grid"))
 
             while True:
-                action = input("\nWould you like to cancel any orders? (yes/no/all): ").lower()
-                
+                action = self.get_input("\nWould you like to cancel any orders? (yes/no/all)").lower()
+
                 if action == 'no':
                     break
                 elif action == 'all':
@@ -1065,7 +1113,7 @@ class TradingTerminal:
                         print(f"Cancelled {cancelled_count} orders.")
                     break
                 elif action == 'yes':
-                    order_number = input("Enter the Number of the order to cancel: ")
+                    order_number = self.get_input("Enter the Number of the order to cancel")
                     try:
                         order_index = int(order_number) - 1
                         if 0 <= order_index < len(active_orders):
@@ -1328,6 +1376,15 @@ class TradingTerminal:
             print("Please login first.")
             return None
 
+        try:
+            return self._place_twap_order_impl()
+        except CancelledException:
+            logging.info("TWAP order placement cancelled by user")
+            print("\nTWAP order placement cancelled. Returning to main menu.")
+            return None
+
+    def _place_twap_order_impl(self):
+        """Internal implementation of place_twap_order with cancellation support."""
         logging.info("=" * 50)
         logging.info("STARTING NEW TWAP ORDER")
         logging.info("=" * 50)
@@ -1346,8 +1403,8 @@ class TradingTerminal:
         logging.info(f"{base_currency} Balance: {base_balance:.8f}")
         logging.info(f"{quote_currency} Balance: {quote_balance:.8f}")
 
-        duration = int(input("Enter TWAP duration in minutes: "))
-        num_slices = int(input("Enter number of slices for TWAP: "))
+        duration = int(self.get_input("Enter TWAP duration in minutes"))
+        num_slices = int(self.get_input("Enter number of slices for TWAP"))
 
         # Get product information for validation
         try:
@@ -1377,7 +1434,7 @@ class TradingTerminal:
         print("2. Current market bid")
         print("3. Current market mid")
         print("4. Current market ask")
-        price_type = input("Enter your choice (1-4): ")
+        price_type = self.get_input("Enter your choice (1-4)")
 
         # Create TWAP ID and initialize tracking
         twap_id = str(uuid.uuid4())
@@ -1730,27 +1787,27 @@ class TradingTerminal:
             
             # Get market selection
             while True:
-                product_choice = input("\nEnter the number of the market to trade (1-20): ")
+                product_choice = self.get_input("\nEnter the number of the market to trade (1-20)")
                 logging.debug(f"User selected market number: {product_choice}")
                 try:
                     index = int(product_choice)
                     if 1 <= index <= len(top_markets):
                         base_currency, market_data = top_markets[index - 1]
-                        
+
                         # Handle quote currency selection
                         available_quotes = []
                         if market_data['has_usd']:
                             available_quotes.append('USD')
                         if market_data['has_usdc']:
                             available_quotes.append('USDC')
-                            
+
                         if len(available_quotes) > 1:
                             print(f"\nAvailable quote currencies for {base_currency}:")
                             for i, quote in enumerate(available_quotes, 1):
                                 print(f"{i}. {quote}")
-                                
+
                             while True:
-                                quote_choice = input(f"Select quote currency (1-{len(available_quotes)}): ")
+                                quote_choice = self.get_input(f"Select quote currency (1-{len(available_quotes)})")
                                 try:
                                     quote_index = int(quote_choice)
                                     if 1 <= quote_index <= len(available_quotes):
@@ -1776,7 +1833,7 @@ class TradingTerminal:
 
             # Get side
             while True:
-                side = input("\nEnter order side (buy/sell): ").upper()
+                side = self.get_input("\nEnter order side (buy/sell)").upper()
                 logging.debug(f"User selected side: {side}")
                 if side in ['BUY', 'SELL']:
                     break
@@ -1793,7 +1850,7 @@ class TradingTerminal:
             # Get limit price
             while True:
                 try:
-                    limit_price = float(input("\nEnter limit price: "))
+                    limit_price = float(self.get_input("\nEnter limit price"))
                     logging.debug(f"User entered limit price: {limit_price}")
                     if limit_price <= 0:
                         print("Price must be greater than 0.")
@@ -1805,7 +1862,7 @@ class TradingTerminal:
             # Get order size
             while True:
                 try:
-                    base_size = float(input("\nEnter order size: "))
+                    base_size = float(self.get_input("\nEnter order size"))
                     logging.debug(f"User entered base size: {base_size}")
                     if base_size <= 0:
                         print("Size must be greater than 0.")
@@ -1984,60 +2041,67 @@ class TradingTerminal:
             print("Error displaying TWAP summary. Check logs for details.")
 
     def display_all_twap_orders(self):
-        """Display comprehensive list of all TWAP orders with execution statistics."""
+        """Display comprehensive list of all TWAP orders with execution statistics.
+
+        Returns:
+            list: List of TWAP order IDs that were displayed, or empty list if none found
+        """
         try:
             # Get list of all TWAP orders from tracker
             twap_ids = self.twap_tracker.list_twap_orders()
             if not twap_ids:
                 print("No TWAP orders found")
-                return
-                
+                return []
+
             print("\nTWAP Orders:")
             print("=" * 100)
-            
+
             for i, twap_id in enumerate(twap_ids, 1):
                 # Get order and stats from tracker
                 twap_order = self.twap_tracker.get_twap_order(twap_id)
                 if not twap_order:
                     continue
-                    
+
                 stats = self.twap_tracker.calculate_twap_statistics(twap_id)
-                
+
                 print(f"\n{i}. TWAP ID: {twap_id}")
                 print(f"   Market: {twap_order.market}")
                 print(f"   Side: {twap_order.side}")
                 print(f"   Status: {twap_order.status}")
                 print(f"   Orders: {len(twap_order.orders)} total")
-                
+
                 if twap_order.failed_slices:
                     print(f"   Failed Slices: {len(twap_order.failed_slices)}")
-                    
+
                 if stats.get('total_value_filled', 0) > 0:
                     print(f"   Total Value Filled: ${stats['total_value_filled']:.2f}")
                     print(f"   Completion Rate: {stats['completion_rate']:.1f}%")
-                    
+
                     # Show maker/taker split if fills exist
                     maker_fills = stats.get('maker_fills', 0)
                     taker_fills = stats.get('taker_fills', 0)
                     if maker_fills + taker_fills > 0:
                         maker_pct = (maker_fills / (maker_fills + taker_fills) * 100)
                         print(f"   Maker/Taker: {maker_pct:.1f}% maker")
-                        
+
                     # Show fees if present
                     total_fees = stats.get('total_fees', 0)
                     if total_fees > 0:
                         fee_bps = (total_fees / stats['total_value_filled']) * 10000
                         print(f"   Total Fees: ${total_fees:.2f} ({fee_bps:.1f} bps)")
-                        
+
                     # Show VWAP if available
                     if 'vwap' in stats:
                         print(f"   VWAP: ${stats['vwap']:.2f}")
-                        
+
                 print("-" * 100)
+
+            return twap_ids
 
         except Exception as e:
             logging.error(f"Error displaying TWAP orders: {str(e)}")
             print("Error displaying TWAP orders. Please check the logs for details.")
+            return []
 
     def run(self):
         """Main execution loop for the trading terminal."""
@@ -2054,8 +2118,12 @@ class TradingTerminal:
                 print("4. Check TWAP order fills")
                 print("5. Show and cancel active orders")
                 print("6. Exit")
-                
-                choice = input("Enter your choice (1-6): ")
+
+                try:
+                    choice = self.get_input("Enter your choice (1-6)")
+                except CancelledException:
+                    print("\nExiting application.")
+                    break
                 
                 if choice == '1':
                     self.view_portfolio()
@@ -2069,17 +2137,21 @@ class TradingTerminal:
                     if twap_id:
                         print(f"TWAP order placed with ID: {twap_id}")
                 elif choice == '4':
-                    self.display_all_twap_orders()
-                    twap_number = input("Enter the number of the TWAP order to check: ")
                     try:
-                        twap_index = int(twap_number) - 1
-                        if 0 <= twap_index < len(self.twap_orders):
-                            twap_id = list(self.twap_orders.keys())[twap_index]
-                            self.check_twap_order_fills(twap_id)
-                        else:
-                            print("Invalid TWAP order number.")
-                    except ValueError:
-                        print("Please enter a valid number.")
+                        twap_ids = self.display_all_twap_orders()
+                        if twap_ids:
+                            twap_number = self.get_input("Enter the number of the TWAP order to check")
+                            try:
+                                twap_index = int(twap_number) - 1
+                                if 0 <= twap_index < len(twap_ids):
+                                    twap_id = twap_ids[twap_index]
+                                    self.check_twap_order_fills(twap_id)
+                                else:
+                                    print("Invalid TWAP order number.")
+                            except ValueError:
+                                print("Please enter a valid number.")
+                    except CancelledException:
+                        print("\nCancelled. Returning to main menu.")
                 elif choice == '5':
                     self.show_and_cancel_orders()
                 elif choice == '6':
