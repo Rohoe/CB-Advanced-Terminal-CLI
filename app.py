@@ -841,17 +841,22 @@ class TradingTerminal:
                 
             # Get minimum order size for the product
             product_info = self.client.get_product(product_id)
-            base_min_size = float(product_info['base_min_size'])
-            base_max_size = float(product_info['base_max_size'])
-            quote_increment = float(product_info['quote_increment'])
+            # Product info is an object, not a dict
+            base_min_size = float(getattr(product_info, 'base_min_size', 0.0001))
+            base_max_size = float(getattr(product_info, 'base_max_size', 1000000))
+            quote_increment = float(getattr(product_info, 'quote_increment', 0.01))
             
             # Validate order size
             if float(base_size) < base_min_size:
-                logging.warning(f"Order size {base_size} is below minimum {base_min_size} for {product_id}")
+                error_msg = f"Order size {base_size} is below minimum {base_min_size} for {product_id}"
+                logging.warning(error_msg)
+                print(f"\nError: {error_msg}")
                 return None
-                
+
             if float(base_size) > base_max_size:
-                logging.warning(f"Order size {base_size} is above maximum {base_max_size} for {product_id}")
+                error_msg = f"Order size {base_size} is above maximum {base_max_size} for {product_id}"
+                logging.warning(error_msg)
+                print(f"\nError: {error_msg}")
                 return None
                 
             # Round price to appropriate increment
@@ -863,13 +868,17 @@ class TradingTerminal:
                 required_funds = float(base_size) * float(limit_price)
                 available_balance = self.get_account_balance(quote_currency)
                 if available_balance < required_funds:
-                    logging.warning(f"Insufficient {quote_currency} balance")
+                    error_msg = f"Insufficient {quote_currency} balance. Need {required_funds:.2f}, have {available_balance:.2f}"
+                    logging.warning(error_msg)
+                    print(f"\nError: {error_msg}")
                     return None
             else:
                 base_currency = product_id.split('-')[0]
                 available_balance = self.get_account_balance(base_currency)
                 if available_balance < float(base_size):
-                    logging.warning(f"Insufficient {base_currency} balance")
+                    error_msg = f"Insufficient {base_currency} balance. Need {float(base_size):.8f}, have {available_balance:.8f}"
+                    logging.warning(error_msg)
+                    print(f"\nError: {error_msg}")
                     return None
 
             logging.debug("Placing limit order with Coinbase API")
