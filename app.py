@@ -2,8 +2,11 @@ from typing import Optional, Dict, List
 from twap_tracker import TWAPTracker, TWAPOrder, OrderFill
 import math
 import logging
-from keys import Keys
-from coinbase.rest import RESTClient
+from config import Config, ConfigurationError
+from config_manager import AppConfig
+from api_client import APIClient, CoinbaseAPIClient
+from storage import TWAPStorage, FileBasedTWAPStorage
+from validators import InputValidator, ValidationError
 import time
 import random
 import threading
@@ -60,15 +63,6 @@ def setup_logging():
 # Call setup_logging at the start
 setup_logging()
 
-# Configurable parameters
-CONFIG = {
-    'retries': 3,
-    'backoff_in_seconds': 1,
-    'rate_limit_requests': 25,
-    'rate_limit_burst': 50,
-    'twap_slice_delay': 2,
-}
-
 class RateLimiter:
     """
     Implements a token bucket rate limiter.
@@ -110,55 +104,92 @@ class RateLimiter:
             time.sleep(0.05)
 
 class TradingTerminal:
-    def __init__(self):
-        """Initialize the trading terminal."""
+    def __init__(self,
+                 api_client: Optional[APIClient] = None,
+                 twap_storage: Optional[TWAPStorage] = None,
+                 config: Optional[AppConfig] = None,
+                 start_checker_thread: bool = True):
+        """
+        Initialize the trading terminal with dependency injection.
+
+        Args:
+            api_client: API client implementation (None = will be set during login).
+            twap_storage: TWAP storage implementation (None = use file-based storage).
+            config: Application configuration (None = load from environment).
+            start_checker_thread: Whether to start the background order checker thread.
+        """
         logging.info("Initializing TradingTerminal")
         try:
-            self.client = None
+            # Configuration
+            self.config = config or AppConfig()
+            logging.debug(f"Using configuration: rate_limit={self.config.rate_limit.requests_per_second}/s")
+
+            # API Client (may be None initially, set during login)
+            self.client = api_client
+
+            # TWAP Storage
+            self.twap_storage = twap_storage or FileBasedTWAPStorage()
+
+            # For backward compatibility, also keep TWAPTracker reference
+            if isinstance(self.twap_storage, FileBasedTWAPStorage):
+                self.twap_tracker = self.twap_storage._tracker
+            else:
+                # Create a dummy tracker for in-memory storage
+                self.twap_tracker = TWAPTracker()
+
+            # Rate Limiter
             logging.debug("Creating RateLimiter")
-            self.rate_limiter = RateLimiter(CONFIG['rate_limit_requests'], CONFIG['rate_limit_burst'])
-            
+            self.rate_limiter = RateLimiter(
+                self.config.rate_limit.requests_per_second,
+                self.config.rate_limit.burst
+            )
+
+            # Thread synchronization
             logging.debug("Initializing queues and locks")
             self.order_queue = Queue()
             self.filled_orders = []
             self.order_lock = Lock()
+            self.twap_lock = Lock()  # NEW: Dedicated lock for TWAP data
             self.is_running = True
-            
+
             # Initialize twap_orders before starting the checker thread
             logging.debug("Initializing TWAP tracking dictionaries")
             self.twap_orders = {}
             self.order_to_twap_map = {}
-            
-            logging.debug("Starting checker thread")
-            self.checker_thread = Thread(target=self.order_status_checker)
-            self.checker_thread.daemon = True  # Make thread daemonic
-            logging.debug("Setting checker thread as daemon")
-            self.checker_thread.start()
-            logging.debug("Checker thread started")
-            
+
+            # Background thread for order status checking
+            if start_checker_thread:
+                logging.debug("Starting checker thread")
+                self.checker_thread = Thread(target=self.order_status_checker)
+                self.checker_thread.daemon = True
+                logging.debug("Setting checker thread as daemon")
+                self.checker_thread.start()
+                logging.debug("Checker thread started")
+            else:
+                self.checker_thread = None
+                logging.debug("Checker thread not started (disabled)")
+
+            # Caches with TTLs from config
             logging.debug("Initializing caches")
             self.order_status_cache = {}
-            self.cache_ttl = 5
+            self.cache_ttl = self.config.cache.order_status_ttl
             self.failed_orders = set()
-            
-            self.precision_config = {
-                'SOL-USDC': {'price': 2, 'size': 4},
-                'BTC-USDC': {'price': 2, 'size': 8},
-                'ETH-USDC': {'price': 2, 'size': 8},
-            }
-            
+
+            # Precision configuration
+            self.precision_config = self.config.precision.product_overrides
+
+            # Account cache
             self.account_cache = {}
             self.account_cache_time = 0
-            self.account_cache_ttl = 60
+            self.account_cache_ttl = self.config.cache.account_ttl
+
+            # Fill cache
             self.fill_cache = {}
             self.fill_cache_time = 0
-            self.fill_cache_ttl = 5
+            self.fill_cache_ttl = self.config.cache.fill_ttl
 
-            #initialize TWAP Tracker
-            self.twap_tracker = TWAPTracker()
-            
             logging.info("TradingTerminal initialization completed successfully")
-            
+
         except Exception as e:
             logging.critical(f"Failed to initialize TradingTerminal: {str(e)}", exc_info=True)
             raise
@@ -393,6 +424,27 @@ class TradingTerminal:
         except Exception as e:
             logging.error(f"Error fetching consolidated markets: {str(e)}")
             return [], [], []
+
+    def _register_twap_order(self, twap_id: str, order_id: str):
+        """
+        Thread-safe TWAP order registration.
+
+        Args:
+            twap_id: The TWAP order ID.
+            order_id: The individual order ID to register.
+        """
+        with self.twap_lock:
+            self.order_to_twap_map[order_id] = twap_id
+            if twap_id not in self.twap_orders:
+                self.twap_orders[twap_id] = {
+                    'total_filled': 0.0,
+                    'total_value_filled': 0.0,
+                    'total_fees': 0.0,
+                    'maker_orders': 0,
+                    'taker_orders': 0,
+                    'orders': []
+                }
+            logging.debug(f"Registered order {order_id} for TWAP {twap_id}")
 
     def place_limit_order(self):
         """Place a limit order with user input."""
@@ -1036,43 +1088,59 @@ class TradingTerminal:
         print(tabulate(table_data, headers=["Asset (Amount)", "USD Value"], tablefmt="grid"))
 
     def login(self):
-        """Authenticate user and initialize the RESTClient."""
+        """Authenticate user and initialize the API client."""
         logging.info("Initiating login process")
         print("Welcome to the Coinbase Trading Terminal!")
-        
+
         try:
-            logging.debug("Attempting to retrieve API credentials")
-            api_key = Keys.api_key
-            api_secret = Keys.api_secret
+            # If client already provided via dependency injection, skip initialization
+            if self.client is not None:
+                logging.info("API client already initialized via dependency injection")
+                print("Login successful!")
+                return True
+
+            logging.debug("Attempting to retrieve API credentials from environment")
+            config = Config()
+            api_key = config.api_key
+            api_secret = config.api_secret
 
             logging.debug("Checking API credentials")
             if not api_key or not api_secret:
                 raise ValueError("API key or secret not found")
 
-            logging.debug("Initializing REST client")
-            self.client = RESTClient(api_key=api_key, api_secret=api_secret, verbose=False)
-            
+            logging.debug("Initializing API client")
+            self.client = CoinbaseAPIClient(
+                api_key=api_key,
+                api_secret=api_secret,
+                verbose=False
+            )
+
             logging.debug("Waiting for rate limiter")
             self.rate_limiter.wait()
-            
+
             logging.debug("Making test authentication request")
             test_response = self.client.get_accounts()
-            
+
             logging.debug(f"Authentication response received: {test_response}")
-            
+
             # Access test_response.accounts which should be a list
             if not hasattr(test_response, 'accounts'):
                 logging.error(f"Response missing accounts field")
                 raise Exception("Failed to authenticate with API - 'accounts' not in response")
-                
+
             # If we get here, authentication was successful
             logging.info("Login successful")
             print("Login successful!")
             return True
-            
+
+        except ConfigurationError as e:
+            logging.error(f"Configuration error: {str(e)}", exc_info=True)
+            print(f"\nConfiguration Error:\n{str(e)}")
+            self.client = None
+            return False
         except AttributeError as e:
             logging.error(f"API credentials error: {str(e)}", exc_info=True)
-            print("Error accessing API credentials. Please check your Keys.py file.")
+            print("Error accessing API credentials. Please check your configuration.")
             self.client = None
             return False
         except Exception as e:
@@ -1099,49 +1167,62 @@ class TradingTerminal:
                         return
                         
                     logging.debug(f"Retrieved order from queue: {order}")
-                    
-                    if order.get('order_id') in self.order_to_twap_map:
+
+                    # Thread-safe check for TWAP order
+                    with self.twap_lock:
+                        is_twap_order = order.get('order_id') in self.order_to_twap_map
+
+                    if is_twap_order:
                         logging.debug(f"Processing TWAP order: {order.get('order_id')}")
                         orders_to_check = [order]
-                        
+
                         # Collect additional orders for batch processing
                         while len(orders_to_check) < 50:
                             try:
                                 order = self.order_queue.get_nowait()
                                 if order is None:
                                     return
-                                if order.get('order_id') in self.order_to_twap_map:
+                                # Thread-safe check
+                                with self.twap_lock:
+                                    is_twap = order.get('order_id') in self.order_to_twap_map
+                                if is_twap:
                                     orders_to_check.append(order)
                             except Empty:
                                 break
-                                
+
                         # Process orders in batch
-                        order_ids = [order['order_id'] for order in orders_to_check 
+                        order_ids = [order['order_id'] for order in orders_to_check
                                 if 'order_id' in order]
-                        
+
                         fills = self.check_order_fills_batch(order_ids)
-                        
+
                         # Update TWAP tracking for each order
                         for order_data in orders_to_check:
                             order_id = order_data.get('order_id')
                             if not order_id:
                                 continue
 
-                            twap_id = self.order_to_twap_map.get(order_id)
+                            # Thread-safe access to TWAP mapping
+                            with self.twap_lock:
+                                twap_id = self.order_to_twap_map.get(order_id)
+
                             if not twap_id:
                                 continue
 
                             fill_info = fills.get(order_id, {})
-                            
+
                             if fill_info.get('status') == 'FILLED':
                                 with self.order_lock:
                                     if order_id not in self.filled_orders:
                                         self.filled_orders.append(order_id)
-                                        # Update TWAP statistics
+
+                                # Thread-safe update of TWAP statistics
+                                with self.twap_lock:
+                                    if twap_id in self.twap_orders:  # Add existence check
                                         self.twap_orders[twap_id]['total_filled'] += fill_info['filled_size']
                                         self.twap_orders[twap_id]['total_value_filled'] += fill_info['filled_value']
                                         self.twap_orders[twap_id]['total_fees'] += fill_info['fees']
-                                        
+
                                         if fill_info['is_maker']:
                                             self.twap_orders[twap_id]['maker_orders'] += 1
                                         else:
