@@ -1,0 +1,7 @@
+# Coinbase Advanced Trading Terminal Requirements
+
+# Coinbase Advanced Trade API SDK
+coinbase-advanced-py>=1.2.0
+
+# Terminal table formatting
+tabulate>=0.9.0
