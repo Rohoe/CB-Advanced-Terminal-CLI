@@ -294,14 +294,18 @@ class TradingTerminal:
 
             # Single API call to get all products
             products_response = self.client.get_products()
-            products = products_response.get('products', [])
+
+            # The response is an object with a 'products' attribute, not a dict
+            products = products_response.products if hasattr(products_response, 'products') else []
 
             # Extract prices for requested product IDs
             for product in products:
-                product_id = product.get('product_id')
-                if product_id in product_ids:
+                # Product is also an object, not a dict
+                product_id = getattr(product, 'product_id', None)
+                if product_id and product_id in product_ids:
                     try:
-                        prices[product_id] = float(product.get('price', 0))
+                        price = getattr(product, 'price', 0)
+                        prices[product_id] = float(price)
                         logging.debug(f"Got price for {product_id}: {prices[product_id]}")
                     except (ValueError, TypeError) as e:
                         logging.warning(f"Could not parse price for {product_id}: {e}")
