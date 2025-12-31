@@ -279,7 +279,8 @@ pytest -m unit
 - **validators.py:** 90.55%
 - **twap_tracker.py:** 87.10%
 - **RateLimiter:** 100% (all tests passing)
-- **70+ total tests** covering core business logic
+- **TradingTerminal:** API response object handling, balance validation, rounding
+- **87+ total tests** covering core business logic
 
 For more information, see the [Testing Guide](TESTING.md).
 
