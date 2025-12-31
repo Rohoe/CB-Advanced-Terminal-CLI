@@ -340,6 +340,42 @@ def reset_environment():
     os.environ.update(original_env)
 
 
+@pytest.fixture
+def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, mock_rate_limiter):
+    """
+    Fully configured TradingTerminal for integration tests.
+
+    This fixture provides a TradingTerminal instance with all dependencies
+    mocked out, making it suitable for integration testing without real API calls.
+
+    Args:
+        mock_api_client: Mocked API client fixture
+        mock_twap_storage: In-memory TWAP storage fixture
+        test_app_config: Test application config fixture
+        mock_rate_limiter: Mocked rate limiter fixture
+
+    Returns:
+        TradingTerminal: Configured terminal instance ready for testing
+
+    Usage in tests:
+        def test_something(terminal_with_mocks):
+            # Use the pre-configured terminal
+            result = terminal_with_mocks.some_method()
+            assert result is not None
+    """
+    from app import TradingTerminal
+
+    terminal = TradingTerminal(
+        api_client=mock_api_client,
+        twap_storage=mock_twap_storage,
+        config=test_app_config,
+        start_checker_thread=False  # Disable background thread for most tests
+    )
+    terminal.rate_limiter = mock_rate_limiter
+
+    return terminal
+
+
 # =============================================================================
 # Pytest Configuration Hooks
 # =============================================================================
