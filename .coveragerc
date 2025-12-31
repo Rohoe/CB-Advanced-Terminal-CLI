@@ -1,0 +1,64 @@
+[run]
+# Source directories to measure coverage for
+source = .
+
+# Files/directories to omit from coverage
+omit =
+    tests/*
+    */__pycache__/*
+    */site-packages/*
+    venv/*
+    .venv/*
+    env/*
+    */python*.*/site-packages/*
+    setup.py
+    */tests/*
+    conftest.py
+
+# Branch coverage (measures if-else branches)
+branch = True
+
+[report]
+# Precision for coverage percentages
+precision = 2
+
+# Show lines that weren't covered
+show_missing = True
+
+# Lines to exclude from coverage reporting
+exclude_lines =
+    # Standard pragmas
+    pragma: no cover
+
+    # Don't complain about missing debug code
+    def __repr__
+    def __str__
+
+    # Don't complain if tests don't hit defensive assertion code
+    raise AssertionError
+    raise NotImplementedError
+
+    # Don't complain if non-runnable code isn't run
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    if typing.TYPE_CHECKING:
+
+    # Don't complain about abstract methods
+    @abstractmethod
+    @abc.abstractmethod
+
+    # Don't complain about pass statements
+    pass
+
+# Fail if coverage is below this threshold
+fail_under = 0
+
+[html]
+# Directory for HTML coverage report
+directory = htmlcov
+
+[paths]
+# Map coverage paths for consistent reporting
+source =
+    .
+    */CB-Advanced-Terminal
