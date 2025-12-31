@@ -110,11 +110,15 @@ class Config:
 
         secret = os.getenv('COINBASE_API_SECRET')
         if secret:
+            self._api_secret = secret
             return secret
 
         if self._prompt_for_secret:
             logging.debug("API secret not in environment, prompting user")
-            return getpass.getpass("Enter Coinbase API Secret: ")
+            secret = getpass.getpass("Enter Coinbase API Secret: ")
+            # Cache the secret so we don't prompt again
+            self._api_secret = secret
+            return secret
         else:
             raise ConfigurationError(
                 "COINBASE_API_SECRET environment variable is not set and "
