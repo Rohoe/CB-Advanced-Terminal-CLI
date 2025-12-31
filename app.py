@@ -267,6 +267,52 @@ class TradingTerminal:
         logging.warning(f"No account found for currency: {currency}")
         return 0
 
+    def get_bulk_prices(self, product_ids: List[str]) -> Dict[str, float]:
+        """
+        Get prices for multiple products in a single API call.
+
+        This method fetches all products at once and extracts prices for the
+        requested product IDs, significantly reducing API calls compared to
+        fetching each product individually.
+
+        Args:
+            product_ids: List of product IDs to fetch prices for (e.g., ['BTC-USD', 'ETH-USD']).
+
+        Returns:
+            Dictionary mapping product_id to price (float).
+
+        Example:
+            >>> prices = terminal.get_bulk_prices(['BTC-USD', 'ETH-USD', 'SOL-USD'])
+            >>> print(prices['BTC-USD'])
+            50000.0
+        """
+        prices = {}
+
+        try:
+            logging.debug(f"Fetching bulk prices for {len(product_ids)} products")
+            self.rate_limiter.wait()
+
+            # Single API call to get all products
+            products_response = self.client.get_products()
+            products = products_response.get('products', [])
+
+            # Extract prices for requested product IDs
+            for product in products:
+                product_id = product.get('product_id')
+                if product_id in product_ids:
+                    try:
+                        prices[product_id] = float(product.get('price', 0))
+                        logging.debug(f"Got price for {product_id}: {prices[product_id]}")
+                    except (ValueError, TypeError) as e:
+                        logging.warning(f"Could not parse price for {product_id}: {e}")
+
+            logging.info(f"Successfully fetched {len(prices)} prices out of {len(product_ids)} requested")
+
+        except Exception as e:
+            logging.error(f"Error fetching bulk prices: {str(e)}", exc_info=True)
+
+        return prices
+
     def get_current_prices(self, product_id: str):
         """Get current bid, ask, and mid prices for a product."""
         try:
@@ -1050,27 +1096,46 @@ class TradingTerminal:
             print(f"Error fetching portfolio: {str(e)}")
 
     def display_portfolio(self, accounts_data):
-        """Display the portfolio data."""
+        """
+        Display the portfolio data with optimized price fetching.
+
+        Uses bulk price fetching to reduce API calls from N to 1,
+        where N is the number of non-stablecoin assets.
+        """
         portfolio_data = []
         total_usd_value = 0
 
+        # Stablecoins that are treated as $1 USD
+        stablecoins = {'USD', 'USDC', 'USDT', 'DAI'}
+
+        # First pass: identify currencies needing price lookup
+        currencies_needing_prices = []
         for currency, account in accounts_data.items():
-            balance = float(account['available_balance']['value'])  # Direct dictionary access
+            balance = float(account['available_balance']['value'])
+            if balance > 0 and currency not in stablecoins:
+                currencies_needing_prices.append(currency)
+
+        # Bulk price lookup - SINGLE API CALL instead of N calls
+        product_ids = [f"{currency}-USD" for currency in currencies_needing_prices]
+        prices = self.get_bulk_prices(product_ids) if product_ids else {}
+
+        # Second pass: calculate values using cached prices
+        for currency, account in accounts_data.items():
+            balance = float(account['available_balance']['value'])
             logging.info(f"Processing {currency} balance: {balance}")
-            
+
             if balance > 0:
-                if currency in ['USD', 'USDC', 'USDT', 'DAI']:
+                if currency in stablecoins:
                     usd_value = balance
                 else:
-                    try:
-                        self.rate_limiter.wait()
-                        product_id = f"{currency}-USD"
-                        ticker = self.client.get_product(product_id)
-                        usd_price = float(ticker['price'])  # Direct dictionary access
-                        usd_value = balance * usd_price
-                    except Exception as e:
-                        logging.warning(f"Couldn't get USD value for {currency}. Error: {str(e)}")
+                    product_id = f"{currency}-USD"
+                    usd_price = prices.get(product_id)
+
+                    if usd_price is None:
+                        logging.warning(f"No price found for {product_id}, skipping")
                         continue
+
+                    usd_value = balance * usd_price
 
                 if usd_value >= 1:
                     portfolio_data.append([currency, balance, usd_value])
