@@ -125,6 +125,46 @@ class Config:
                 "interactive prompting is disabled."
             )
 
+    @property
+    def base_url(self) -> str:
+        """
+        Get the API base URL (production or sandbox).
+
+        Returns:
+            The base URL for the Coinbase API.
+            - 'api-sandbox.coinbase.com' if COINBASE_SANDBOX_MODE=true
+            - Custom URL if COINBASE_BASE_URL is set
+            - 'api.coinbase.com' (production) by default
+
+        Environment Variables:
+            COINBASE_SANDBOX_MODE: Set to 'true' to use sandbox environment
+            COINBASE_BASE_URL: Override with custom base URL
+        """
+        sandbox_mode = os.getenv('COINBASE_SANDBOX_MODE', 'false').lower()
+        if sandbox_mode == 'true':
+            return 'api-sandbox.coinbase.com'
+        return os.getenv('COINBASE_BASE_URL', 'api.coinbase.com')
+
+    @property
+    def is_sandbox(self) -> bool:
+        """
+        Check if running in sandbox mode.
+
+        Returns:
+            True if COINBASE_SANDBOX_MODE environment variable is set to 'true'.
+        """
+        return os.getenv('COINBASE_SANDBOX_MODE', 'false').lower() == 'true'
+
+    @property
+    def verbose(self) -> bool:
+        """
+        Check if verbose logging is enabled.
+
+        Returns:
+            True if COINBASE_VERBOSE environment variable is set to 'true'.
+        """
+        return os.getenv('COINBASE_VERBOSE', 'false').lower() == 'true'
+
     @classmethod
     def from_env(cls) -> 'Config':
         """

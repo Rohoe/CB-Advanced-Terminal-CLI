@@ -185,13 +185,18 @@ class CoinbaseAPIClient(APIClient):
             print(f"{account.currency}: {account.available_balance}")
     """
 
-    def __init__(self, api_key: str, api_secret: str, verbose: bool = False):
+    def __init__(self, api_key: str, api_secret: str,
+                 base_url: str = 'api.coinbase.com',
+                 verbose: bool = False):
         """
         Initialize the Coinbase API client.
 
         Args:
             api_key: Coinbase API key.
             api_secret: Coinbase API secret.
+            base_url: Base URL for API (production or sandbox).
+                     Default: 'api.coinbase.com' (production)
+                     Sandbox: 'api-sandbox.coinbase.com'
             verbose: Enable verbose logging in the SDK.
         """
         from coinbase.rest import RESTClient
@@ -199,9 +204,10 @@ class CoinbaseAPIClient(APIClient):
         self._client = RESTClient(
             api_key=api_key,
             api_secret=api_secret,
+            base_url=base_url,
             verbose=verbose
         )
-        logging.debug("CoinbaseAPIClient initialized")
+        logging.debug(f"CoinbaseAPIClient initialized with base_url={base_url}")
 
     def get_accounts(self, cursor: Optional[str] = None, limit: int = 250) -> Any:
         """Get account information with pagination support."""
@@ -277,7 +283,7 @@ class APIClientFactory:
         """
         Create a CoinbaseAPIClient using configuration.
 
-        Loads API credentials from the Config class.
+        Loads API credentials and base URL from the Config class.
 
         Returns:
             Configured CoinbaseAPIClient instance.
@@ -290,17 +296,22 @@ class APIClientFactory:
         config = Config()
         return CoinbaseAPIClient(
             api_key=config.api_key,
-            api_secret=config.api_secret
+            api_secret=config.api_secret,
+            base_url=config.base_url,
+            verbose=config.verbose
         )
 
     @staticmethod
-    def create(api_key: str, api_secret: str, verbose: bool = False) -> CoinbaseAPIClient:
+    def create(api_key: str, api_secret: str,
+               base_url: str = 'api.coinbase.com',
+               verbose: bool = False) -> CoinbaseAPIClient:
         """
         Create a CoinbaseAPIClient with explicit credentials.
 
         Args:
             api_key: Coinbase API key.
             api_secret: Coinbase API secret.
+            base_url: Base URL for API (default: production).
             verbose: Enable verbose logging.
 
         Returns:
@@ -309,6 +320,7 @@ class APIClientFactory:
         return CoinbaseAPIClient(
             api_key=api_key,
             api_secret=api_secret,
+            base_url=base_url,
             verbose=verbose
         )
 

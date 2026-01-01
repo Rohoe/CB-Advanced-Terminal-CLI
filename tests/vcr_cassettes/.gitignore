@@ -1,0 +1,13 @@
+# VCR Cassettes - Recorded API Interactions
+# ===========================================
+
+# By default, don't commit cassettes with potentially sensitive data
+*.yaml
+*.yml
+
+# DO commit safe sandbox cassettes for regression testing
+!sandbox_*.yaml
+!sandbox_*.yml
+
+# Keep this directory in git
+!.gitignore
