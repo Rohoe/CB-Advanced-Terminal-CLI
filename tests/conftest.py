@@ -377,6 +377,89 @@ def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, moc
 
 
 # =============================================================================
+# VCR Fixtures for Recording API Responses
+# =============================================================================
+
+@pytest.fixture
+def vcr_cassette_dir():
+    """
+    Directory for VCR cassettes.
+
+    Returns:
+        str: Path to cassette directory.
+    """
+    return 'tests/vcr_cassettes'
+
+
+@pytest.fixture
+def vcr_config():
+    """
+    VCR configuration dictionary.
+
+    Returns:
+        dict: VCR configuration options.
+    """
+    return {
+        'cassette_library_dir': 'tests/vcr_cassettes',
+        'record_mode': 'once',
+        'match_on': ['method', 'scheme', 'host', 'port', 'path', 'query'],
+        'filter_headers': ['authorization', 'Authorization', 'CB-ACCESS-KEY', 'CB-ACCESS-SIGN'],
+        'decode_compressed_response': True,
+        'serializer': 'yaml',
+    }
+
+
+@pytest.fixture
+def api_vcr(vcr_config):
+    """
+    VCR instance for recording API calls.
+
+    This fixture provides a pre-configured VCR instance that can be
+    used to record and replay HTTP interactions with the Coinbase API.
+
+    Usage:
+        @api_vcr.use_cassette('my_test.yaml')
+        def test_api_call(api_vcr):
+            # API calls will be recorded/replayed
+            response = client.get_accounts()
+
+    Returns:
+        vcr.VCR: Configured VCR instance.
+    """
+    import vcr
+    return vcr.VCR(**vcr_config)
+
+
+# =============================================================================
+# Sandbox API Fixtures
+# =============================================================================
+
+@pytest.fixture
+def sandbox_client():
+    """
+    Create API client pointing to Coinbase sandbox.
+
+    The sandbox environment requires NO authentication and returns
+    static, pre-defined responses.
+
+    Returns:
+        CoinbaseAPIClient: Client configured for sandbox environment.
+
+    Note:
+        This fixture requires COINBASE_SANDBOX_MODE=true to be set
+        for integration tests to run.
+    """
+    from api_client import CoinbaseAPIClient
+
+    return CoinbaseAPIClient(
+        api_key='',  # Not required for sandbox
+        api_secret='',  # Not required for sandbox
+        base_url='api-sandbox.coinbase.com',
+        verbose=True
+    )
+
+
+# =============================================================================
 # Pytest Configuration Hooks
 # =============================================================================
 
@@ -403,6 +486,14 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "security: marks tests as security-related tests"
+    )
+    config.addinivalue_line(
+        "markers",
+        "sandbox: marks tests as sandbox integration tests (requires COINBASE_SANDBOX_MODE=true)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "vcr: marks tests that use VCR.py for recording/replaying API calls"
     )
 
 

@@ -21,6 +21,18 @@ import logging
 
 from api_client import APIClient
 
+# Import schemas for validation (optional - logs warnings if validation fails)
+try:
+    from tests.schemas.api_responses import (
+        AccountsResponse, ProductsResponse, ProductBook,
+        FillsResponse, OrderResponse, OrdersResponse,
+        CancelResponse, TransactionSummary
+    )
+    SCHEMAS_AVAILABLE = True
+except ImportError:
+    SCHEMAS_AVAILABLE = False
+    logging.debug("Pydantic schemas not available - skipping validation")
+
 
 class MockCoinbaseAPI(APIClient):
     """
@@ -211,12 +223,52 @@ class MockCoinbaseAPI(APIClient):
             self.orders[order_id]['status'] = 'FILLED'
 
     # =========================================================================
+    # Schema Validation Helper
+    # =========================================================================
+
+    def _validate_response(self, schema_class, data: dict, method_name: str):
+        """
+        Validate response data against Pydantic schema.
+
+        Logs a warning if validation fails but doesn't raise an exception.
+        This allows tests to continue while catching schema mismatches.
+
+        Args:
+            schema_class: Pydantic model class to validate against.
+            data: Response data to validate.
+            method_name: API method name for logging.
+        """
+        if not SCHEMAS_AVAILABLE:
+            return
+
+        try:
+            schema_class(**data)
+            logging.debug(f"{method_name}: Response validation passed")
+        except Exception as e:
+            logging.warning(
+                f"{method_name}: Response validation failed - "
+                f"mock may not match real API structure. Error: {e}"
+            )
+
+    # =========================================================================
     # APIClient Interface Implementation
     # =========================================================================
 
     def get_accounts(self, cursor: Optional[str] = None, limit: int = 250) -> Any:
         """Get account information."""
         accounts_list = [Mock(**data) for data in self.accounts.values()]
+
+        # Validate response structure
+        self._validate_response(
+            AccountsResponse,
+            {
+                'accounts': list(self.accounts.values()),
+                'cursor': '',
+                'has_next': False
+            },
+            'get_accounts'
+        )
+
         return Mock(
             accounts=accounts_list,
             cursor='',

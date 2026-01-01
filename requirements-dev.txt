@@ -19,6 +19,11 @@ freezegun>=1.2.2           # Mock datetime for testing
 # HTTP Mocking (if needed for API tests)
 # ---------------------------------------
 responses>=0.23.1          # Mock HTTP responses
+vcrpy>=5.1.0               # Record and replay HTTP interactions
+
+# Schema Validation
+# -----------------
+pydantic>=2.5.0            # Data validation using Python type hints
 
 # Code Quality
 # ------------
