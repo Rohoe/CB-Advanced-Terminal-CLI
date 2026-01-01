@@ -505,6 +505,83 @@ class TradingTerminal:
             logging.error(f"Error fetching consolidated markets: {str(e)}")
             return [], [], []
 
+    def _select_market(self) -> Optional[str]:
+        """
+        Interactive market selection from top 20 markets by volume.
+        Prompts user to select market and quote currency.
+
+        Returns:
+            str: Selected product_id (e.g., 'BTC-USDC')
+            None: If market data unavailable
+
+        Raises:
+            CancelledException: If user cancels selection
+        """
+        # Get market data
+        logging.debug("Fetching market data")
+        rows, headers, top_markets = self.get_consolidated_markets(20)
+
+        if not rows:
+            logging.error("Failed to fetch top markets")
+            print("Error fetching market data. Please try again.")
+            return None
+
+        print("\nTop Markets by 24h Volume:")
+        print("=" * 120)
+        print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
+        print("=" * 120)
+
+        # Get market selection
+        logging.debug("Getting market selection")
+        while True:
+            product_choice = self.get_input("\nEnter the number of the market to trade (1-20)")
+            logging.debug(f"User selected market number: {product_choice}")
+            try:
+                index = int(product_choice)
+                if 1 <= index <= len(top_markets):
+                    base_currency, market_data = top_markets[index - 1]
+
+                    # Handle quote currency selection
+                    logging.debug(f"Processing quote currency selection for {base_currency}")
+                    available_quotes = []
+                    if market_data['has_usd']:
+                        available_quotes.append('USD')
+                    if market_data['has_usdc']:
+                        available_quotes.append('USDC')
+
+                    if len(available_quotes) > 1:
+                        print(f"\nAvailable quote currencies for {base_currency}:")
+                        for i, quote in enumerate(available_quotes, 1):
+                            print(f"{i}. {quote}")
+
+                        while True:
+                            quote_choice = self.get_input(f"Select quote currency (1-{len(available_quotes)})")
+                            logging.debug(f"User selected quote currency option: {quote_choice}")
+                            try:
+                                quote_index = int(quote_choice)
+                                if 1 <= quote_index <= len(available_quotes):
+                                    quote_currency = available_quotes[quote_index - 1]
+                                    break
+                                else:
+                                    print(f"Please enter a number between 1 and {len(available_quotes)}")
+                            except ValueError:
+                                print("Please enter a valid number")
+                    else:
+                        quote_currency = available_quotes[0]
+
+                    product_id = f"{base_currency}-{quote_currency}"
+                    if quote_currency == 'USD':
+                        product_id = market_data['usd_product']
+                    else:
+                        product_id = market_data['usdc_product']
+
+                    logging.debug(f"Final product_id selected: {product_id}")
+                    return product_id
+                else:
+                    print("Invalid selection. Please enter a number between 1 and 20.")
+            except ValueError:
+                print("Please enter a valid number.")
+
     def _register_twap_order(self, twap_id: str, order_id: str):
         """
         Thread-safe TWAP order registration.
@@ -546,70 +623,10 @@ class TradingTerminal:
     def _place_limit_order_impl(self):
         """Internal implementation of place_limit_order with cancellation support."""
         try:
-            # Get market data
-            logging.debug("Fetching market data")
-            rows, headers, top_markets = self.get_consolidated_markets(20)
-            
-            if not rows:
-                logging.error("Failed to fetch top markets")
-                print("Error fetching market data. Please try again.")
-                return
-                
-            print("\nTop Markets by 24h Volume:")
-            print("=" * 120)
-            print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
-            print("=" * 120)
-            
             # Get market selection
-            logging.debug("Getting market selection")
-            while True:
-                product_choice = self.get_input("\nEnter the number of the market to trade (1-20)")
-                logging.debug(f"User selected market number: {product_choice}")
-                try:
-                    index = int(product_choice)
-                    if 1 <= index <= len(top_markets):
-                        base_currency, market_data = top_markets[index - 1]
-                        
-                        # Handle quote currency selection
-                        logging.debug(f"Processing quote currency selection for {base_currency}")
-                        available_quotes = []
-                        if market_data['has_usd']:
-                            available_quotes.append('USD')
-                        if market_data['has_usdc']:
-                            available_quotes.append('USDC')
-                            
-                        if len(available_quotes) > 1:
-                            print(f"\nAvailable quote currencies for {base_currency}:")
-                            for i, quote in enumerate(available_quotes, 1):
-                                print(f"{i}. {quote}")
-                                
-                            while True:
-                                quote_choice = self.get_input(f"Select quote currency (1-{len(available_quotes)})")
-                                logging.debug(f"User selected quote currency option: {quote_choice}")
-                                try:
-                                    quote_index = int(quote_choice)
-                                    if 1 <= quote_index <= len(available_quotes):
-                                        quote_currency = available_quotes[quote_index - 1]
-                                        break
-                                    else:
-                                        print(f"Please enter a number between 1 and {len(available_quotes)}")
-                                except ValueError:
-                                    print("Please enter a valid number")
-                        else:
-                            quote_currency = available_quotes[0]
-                        
-                        product_id = f"{base_currency}-{quote_currency}"
-                        if quote_currency == 'USD':
-                            product_id = market_data['usd_product']
-                        else:
-                            product_id = market_data['usdc_product']
-                            
-                        logging.debug(f"Final product_id selected: {product_id}")
-                        break
-                    else:
-                        print("Invalid selection. Please enter a number between 1 and 20.")
-                except ValueError:
-                    print("Please enter a valid number.")
+            product_id = self._select_market()
+            if not product_id:
+                return
 
             # Get side
             while True:
@@ -1770,66 +1787,12 @@ class TradingTerminal:
         Returns a dictionary with the order parameters or None if input validation fails.
         """
         logging.info("Getting order input parameters from user")
-        
+
         try:
-            # Get market data for selection
-            rows, headers, top_markets = self.get_consolidated_markets(20)
-            
-            if not rows:
-                logging.error("Failed to fetch top markets")
-                print("Error fetching market data. Please try again.")
-                return None
-                
-            print("\nTop Markets by 24h Volume:")
-            print("=" * 120)
-            print(tabulate(rows, headers=headers, tablefmt="plain", numalign="left"))
-            print("=" * 120)
-            
             # Get market selection
-            while True:
-                product_choice = self.get_input("\nEnter the number of the market to trade (1-20)")
-                logging.debug(f"User selected market number: {product_choice}")
-                try:
-                    index = int(product_choice)
-                    if 1 <= index <= len(top_markets):
-                        base_currency, market_data = top_markets[index - 1]
-
-                        # Handle quote currency selection
-                        available_quotes = []
-                        if market_data['has_usd']:
-                            available_quotes.append('USD')
-                        if market_data['has_usdc']:
-                            available_quotes.append('USDC')
-
-                        if len(available_quotes) > 1:
-                            print(f"\nAvailable quote currencies for {base_currency}:")
-                            for i, quote in enumerate(available_quotes, 1):
-                                print(f"{i}. {quote}")
-
-                            while True:
-                                quote_choice = self.get_input(f"Select quote currency (1-{len(available_quotes)})")
-                                try:
-                                    quote_index = int(quote_choice)
-                                    if 1 <= quote_index <= len(available_quotes):
-                                        quote_currency = available_quotes[quote_index - 1]
-                                        break
-                                    print(f"Please enter a number between 1 and {len(available_quotes)}")
-                                except ValueError:
-                                    print("Please enter a valid number")
-                        else:
-                            quote_currency = available_quotes[0]
-                        
-                        product_id = f"{base_currency}-{quote_currency}"
-                        if quote_currency == 'USD':
-                            product_id = market_data['usd_product']
-                        else:
-                            product_id = market_data['usdc_product']
-                            
-                        logging.debug(f"Final product_id selected: {product_id}")
-                        break
-                    print("Invalid selection. Please enter a number between 1 and 20.")
-                except ValueError:
-                    print("Please enter a valid number.")
+            product_id = self._select_market()
+            if not product_id:
+                return None
 
             # Get side
             while True:
