@@ -164,4 +164,5 @@ cython_debug/
 #keys
 keys.py
 logs/
+twap_data/*.code-workspace
 twap_data/
