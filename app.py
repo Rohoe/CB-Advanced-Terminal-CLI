@@ -2080,14 +2080,13 @@ class TradingTerminal:
                 print("3. Place a TWAP order")
                 print("4. Check TWAP order fills")
                 print("5. Show and cancel active orders")
-                print("6. Exit")
 
                 try:
-                    choice = self.get_input("Enter your choice (1-6)")
+                    choice = self.get_input("Enter your choice (1-5)")
                 except CancelledException:
                     print("\nExiting application.")
                     break
-                
+
                 if choice == '1':
                     self.view_portfolio()
                 elif choice == '2':
@@ -2117,12 +2116,6 @@ class TradingTerminal:
                         print("\nCancelled. Returning to main menu.")
                 elif choice == '5':
                     self.show_and_cancel_orders()
-                elif choice == '6':
-                    if self.checker_thread and self.checker_thread.is_alive():
-                        self.is_running = False
-                        self.checker_thread.join()
-                    print("Thank you for using the Coinbase Trading Terminal. Goodbye!")
-                    break
                 else:
                     print("Invalid choice. Please try again.")
         except Exception as e:
