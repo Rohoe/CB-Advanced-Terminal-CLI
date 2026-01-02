@@ -19,6 +19,12 @@ from functools import wraps
 from collections import defaultdict
 import uuid
 import os
+from ui_helpers import (
+    Colors, success, error, warning, info, highlight,
+    format_currency, format_percentage, format_side, format_status,
+    print_header, print_subheader, print_success, print_error,
+    print_warning, print_info
+)
 
 # Configure logging with both file and console output
 def setup_logging():
@@ -191,6 +197,11 @@ class TradingTerminal:
             self.fill_cache = {}
             self.fill_cache_time = 0
             self.fill_cache_ttl = self.config.cache.fill_ttl
+
+            # Fee tier cache
+            self.fee_tier_cache = None
+            self.fee_tier_cache_time = 0
+            self.fee_tier_cache_ttl = 3600  # Cache for 1 hour (fee tiers change infrequently)
 
             logging.info("TradingTerminal initialization completed successfully")
 
@@ -607,7 +618,7 @@ class TradingTerminal:
         """Place a limit order with user input."""
         if not self.client:
             logging.warning("Attempt to place limit order without login")
-            print("Please login first.")
+            print_warning("Please login first.")
             return
 
         logging.debug("Starting limit order placement")
@@ -617,7 +628,7 @@ class TradingTerminal:
             return self._place_limit_order_impl()
         except CancelledException:
             logging.info("Limit order placement cancelled by user")
-            print("\nOrder placement cancelled. Returning to main menu.")
+            print_info("\nOrder placement cancelled. Returning to main menu.")
             return None
 
     def _place_limit_order_impl(self):
@@ -713,19 +724,39 @@ class TradingTerminal:
                 except ValueError:
                     print("Please enter a valid number.")
 
-            # Show order summary
-            print("\nOrder Summary:")
-            print(f"Product: {product_id}")
-            print(f"Side: {side}")
-            print(f"Size: {base_size}")
-            print(f"Limit Price: ${limit_price:.2f}")
+            # Get actual fee rates
+            maker_rate, taker_rate = self.get_fee_rates()
+
+            # Calculate estimated fee
+            estimated_fee_maker = self.calculate_estimated_fee(base_size, limit_price, is_maker=True)
+            estimated_fee_taker = self.calculate_estimated_fee(base_size, limit_price, is_maker=False)
+
+            # Show order summary with fee estimates
+            print_header("\nOrder Summary")
+            print(f"Product: {info(product_id)}")
+            print(f"Side: {format_side(side)}")
+            print(f"Size: {highlight(str(base_size))}")
+            print(f"Limit Price: {format_currency(limit_price, colored=False)}")
+
+            order_value = base_size * limit_price
+            print(f"\nOrder Value: {format_currency(order_value, colored=False)}")
+
+            print_subheader("\nEstimated Fees")
+            print(f"If Maker ({maker_rate:.2%}): {format_currency(estimated_fee_maker, colored=False)}")
+            print(f"If Taker ({taker_rate:.2%}): {format_currency(estimated_fee_taker, colored=False)}")
 
             if side == "BUY":
-                total_cost = base_size * limit_price
-                print(f"Total Cost: ${total_cost:.2f}")
+                total_cost_maker = order_value + estimated_fee_maker
+                total_cost_taker = order_value + estimated_fee_taker
+                print_subheader("\nTotal Cost (including fees)")
+                print(f"Best case (maker): {format_currency(total_cost_maker, colored=False)}")
+                print(f"Worst case (taker): {format_currency(total_cost_taker, colored=False)}")
             else:
-                total_value = base_size * limit_price
-                print(f"Total Value: ${total_value:.2f}")
+                total_value_maker = order_value - estimated_fee_maker
+                total_value_taker = order_value - estimated_fee_taker
+                print_subheader("\nNet Proceeds (after fees)")
+                print(f"Best case (maker): {format_currency(total_value_maker, colored=False)}")
+                print(f"Worst case (taker): {format_currency(total_value_taker, colored=False)}")
 
             confirm = self.get_input("\nDo you want to place this order? (yes/no)").lower()
             logging.debug(f"User confirmation: {confirm}")
@@ -760,8 +791,8 @@ class TradingTerminal:
                         return None
 
                     logging.info(f"Limit order placed successfully. Order ID: {order_id}")
-                    print(f"\nOrder placed successfully!")
-                    print(f"Order ID: {order_id}")
+                    print_success("\nOrder placed successfully!")
+                    print(f"Order ID: {highlight(order_id)}")
                     
                     # Explicitly return without any further processing
                     logging.debug("Returning from place_limit_order with order ID")
@@ -776,9 +807,12 @@ class TradingTerminal:
                 print("\nFailed to place order. Please try again.")
                 return None
 
+        except CancelledException:
+            # Already handled in outer try-catch, just re-raise
+            raise
         except Exception as e:
             logging.error(f"Error in place_limit_order: {str(e)}", exc_info=True)
-            print(f"\nError placing order: {str(e)}")
+            print_error(f"\nError placing order: {str(e)}")
             return None
         finally:
             logging.debug("Exiting place_limit_order function")
@@ -792,22 +826,9 @@ class TradingTerminal:
                 logging.warning(f"TWAP order {twap_id} not found")
                 return False
 
-            # Get current fee rates from transaction summary
-            try:
-                fee_info = self.client.get_transaction_summary()
-                if hasattr(fee_info, 'fee_tier') and isinstance(fee_info.fee_tier, dict):
-                    fee_tier = fee_info.fee_tier
-                    maker_rate = float(fee_tier.get('maker_fee_rate', '0.004'))
-                    taker_rate = float(fee_tier.get('taker_fee_rate', '0.006'))
-                    logging.info(f"Current fee rates - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
-                else:
-                    logging.warning("Unable to get fee tier info, using default rates")
-                    maker_rate = 0.004  # 0.4%
-                    taker_rate = 0.006  # 0.6%
-            except Exception as e:
-                logging.error(f"Error getting fee rates: {str(e)}")
-                maker_rate = 0.004
-                taker_rate = 0.006
+            # Get current fee rates using cached method
+            maker_rate, taker_rate = self.get_fee_rates()
+            logging.info(f"Using fee rates for TWAP fills - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
 
             # Get fills for all orders
             fills = []
@@ -1055,42 +1076,316 @@ class TradingTerminal:
         """Get list of active orders."""
         try:
             orders_response = self.client.list_orders()
-            
+
             # Use dot notation instead of dictionary access
             if hasattr(orders_response, 'orders'):
                 all_orders = orders_response.orders
-                active_orders = [order for order in all_orders 
+                active_orders = [order for order in all_orders
                             if order.status in ['OPEN', 'PENDING']]
                 return active_orders
             else:
                 logging.warning("No orders field found in response")
                 return []
-                
+
         except Exception as e:
             logging.error(f"Error fetching orders: {str(e)}")
             return []
+
+    def get_order_history(self, limit: int = 100, product_id: Optional[str] = None,
+                         order_status: Optional[List[str]] = None):
+        """
+        Get historical orders with optional filters.
+
+        Args:
+            limit: Maximum number of orders to retrieve (default 100)
+            product_id: Filter by specific product (e.g., 'BTC-USDC')
+            order_status: Filter by order status list (e.g., ['FILLED', 'CANCELLED'])
+
+        Returns:
+            List of historical order objects
+        """
+        try:
+            logging.info(f"Fetching order history (limit={limit}, product={product_id}, status={order_status})")
+
+            self.rate_limiter.wait()
+
+            # Fetch all orders (API doesn't support filtering parameters)
+            orders_response = self.client.list_orders()
+
+            if not hasattr(orders_response, 'orders'):
+                logging.warning("No orders field found in response")
+                return []
+
+            all_orders = orders_response.orders
+
+            # Apply filters in Python
+            filtered_orders = []
+            for order in all_orders:
+                # Filter by product_id
+                if product_id and order.product_id != product_id:
+                    continue
+
+                # Filter by order_status
+                if order_status and order.status not in order_status:
+                    continue
+
+                filtered_orders.append(order)
+
+                # Stop if we've reached the limit
+                if len(filtered_orders) >= limit:
+                    break
+
+            logging.info(f"Retrieved {len(filtered_orders)} orders (from {len(all_orders)} total)")
+            return filtered_orders
+
+        except Exception as e:
+            logging.error(f"Error fetching order history: {str(e)}", exc_info=True)
+            return []
+
+    def get_fee_rates(self, force_refresh: bool = False):
+        """
+        Get current fee rates for the account with caching.
+
+        Args:
+            force_refresh: Force refresh even if cached data is available
+
+        Returns:
+            Tuple of (maker_rate, taker_rate) as floats
+        """
+        current_time = time.time()
+
+        # Check cache
+        if not force_refresh and self.fee_tier_cache and (current_time - self.fee_tier_cache_time) < self.fee_tier_cache_ttl:
+            logging.debug(f"Using cached fee rates: {self.fee_tier_cache}")
+            return self.fee_tier_cache
+
+        try:
+            logging.info("Fetching fee tier information from API")
+            self.rate_limiter.wait()
+
+            fee_info = self.client.get_transaction_summary()
+            logging.debug(f"Transaction summary response type: {type(fee_info)}")
+            logging.debug(f"Transaction summary response: {fee_info}")
+
+            # Try different ways to access fee tier
+            maker_rate = 0.006  # Default conservative estimate
+            taker_rate = 0.006  # Default conservative estimate
+
+            # Method 1: Try as object attribute
+            if hasattr(fee_info, 'fee_tier'):
+                fee_tier = fee_info.fee_tier
+                logging.debug(f"Fee tier type: {type(fee_tier)}")
+                logging.debug(f"Fee tier content: {fee_tier}")
+
+                # Check if it's a dict
+                if isinstance(fee_tier, dict):
+                    maker_rate = float(fee_tier.get('maker_fee_rate', 0.006))
+                    taker_rate = float(fee_tier.get('taker_fee_rate', 0.006))
+                    logging.info(f"Parsed fee rates from dict - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
+                # Check if it's an object with attributes
+                elif hasattr(fee_tier, 'maker_fee_rate') and hasattr(fee_tier, 'taker_fee_rate'):
+                    maker_rate = float(fee_tier.maker_fee_rate)
+                    taker_rate = float(fee_tier.taker_fee_rate)
+                    logging.info(f"Parsed fee rates from object - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
+                else:
+                    logging.warning(f"Fee tier has unexpected format: {type(fee_tier)}")
+
+            # Method 2: Try as dict
+            elif isinstance(fee_info, dict) and 'fee_tier' in fee_info:
+                fee_tier = fee_info['fee_tier']
+                if isinstance(fee_tier, dict):
+                    maker_rate = float(fee_tier.get('maker_fee_rate', 0.006))
+                    taker_rate = float(fee_tier.get('taker_fee_rate', 0.006))
+                    logging.info(f"Parsed fee rates from response dict - Maker: {maker_rate:.4%}, Taker: {taker_rate:.4%}")
+
+            # Cache the result
+            self.fee_tier_cache = (maker_rate, taker_rate)
+            self.fee_tier_cache_time = current_time
+
+            logging.info(f"Fee rates cached: Maker={maker_rate:.4%}, Taker={taker_rate:.4%}")
+            return (maker_rate, taker_rate)
+
+        except Exception as e:
+            logging.error(f"Error fetching fee rates: {str(e)}", exc_info=True)
+            # Return conservative default
+            default_rates = (0.006, 0.006)
+            logging.warning(f"Using default fee rates: {default_rates}")
+            return default_rates
+
+    def calculate_estimated_fee(self, size: float, price: float, is_maker: bool = True) -> float:
+        """
+        Calculate estimated fee for an order.
+
+        Args:
+            size: Order size
+            price: Order price
+            is_maker: Whether order is likely to be a maker order (default True for limit orders)
+
+        Returns:
+            Estimated fee in USD
+        """
+        try:
+            maker_rate, taker_rate = self.get_fee_rates()
+            order_value = size * price
+            fee_rate = maker_rate if is_maker else taker_rate
+            estimated_fee = order_value * fee_rate
+
+            logging.debug(f"Estimated fee: ${estimated_fee:.2f} ({fee_rate:.4%} of ${order_value:.2f})")
+            return estimated_fee
+
+        except Exception as e:
+            logging.error(f"Error calculating fee: {str(e)}", exc_info=True)
+            # Fallback to conservative estimate
+            return size * price * 0.006
+
+    def view_order_history(self):
+        """Display order history with filters and colored output."""
+        if not self.client:
+            print_warning("Please login first.")
+            return
+
+        try:
+            print_header("Order History")
+
+            # Ask user for filters
+            print("\nFilter options:")
+            print("1. All orders (last 100)")
+            print("2. Filter by product")
+            print("3. Filter by status")
+            print("4. Filter by product and status")
+
+            try:
+                filter_choice = self.get_input("Select filter option (1-4)")
+            except CancelledException:
+                print_info("Cancelled. Returning to main menu.")
+                return
+
+            product_id = None
+            order_status = None
+
+            # Handle filter selection
+            if filter_choice in ['2', '4']:
+                product_id = self._select_market()
+                if not product_id:
+                    return
+
+            if filter_choice in ['3', '4']:
+                print("\nStatus filter:")
+                print("1. FILLED")
+                print("2. CANCELLED")
+                print("3. EXPIRED")
+                print("4. FAILED")
+                print("5. All completed (FILLED, CANCELLED, EXPIRED)")
+
+                try:
+                    status_choice = self.get_input("Select status filter (1-5)")
+                except CancelledException:
+                    print_info("Cancelled. Returning to main menu.")
+                    return
+
+                status_map = {
+                    '1': ['FILLED'],
+                    '2': ['CANCELLED'],
+                    '3': ['EXPIRED'],
+                    '4': ['FAILED'],
+                    '5': ['FILLED', 'CANCELLED', 'EXPIRED']
+                }
+                order_status = status_map.get(status_choice, None)
+
+            # Fetch orders
+            print_info("\nFetching order history...")
+            orders = self.get_order_history(
+                limit=100,
+                product_id=product_id,
+                order_status=order_status
+            )
+
+            if not orders:
+                print_warning("No orders found matching the criteria.")
+                return
+
+            # Display orders in a table
+            table_data = []
+            for order in orders:
+                # Extract order details
+                order_config = order.order_configuration
+                config_type = next(iter(vars(order_config)))
+                config = getattr(order_config, config_type)
+
+                size = getattr(config, 'base_size', 'N/A')
+                price = getattr(config, 'limit_price', getattr(config, 'market_market_ioc', {}).get('quote_size', 'N/A'))
+
+                # Calculate order value if possible
+                try:
+                    if size != 'N/A' and price != 'N/A':
+                        value = float(size) * float(price)
+                        value_str = format_currency(value, colored=True)
+                    else:
+                        value_str = 'N/A'
+                except:
+                    value_str = 'N/A'
+
+                # Format created time
+                created_time = datetime.fromisoformat(order.created_time.replace('Z', '+00:00'))
+                time_str = created_time.strftime("%Y-%m-%d %H:%M:%S")
+
+                # Truncate order ID for display
+                order_id_short = order.order_id[:12] + "..."
+
+                table_data.append([
+                    time_str,
+                    order_id_short,
+                    order.product_id,
+                    format_side(order.side),
+                    size,
+                    price if price != 'N/A' else 'N/A',
+                    value_str,
+                    format_status(order.status)
+                ])
+
+            print_subheader(f"\nFound {len(orders)} orders:")
+            print(tabulate(
+                table_data,
+                headers=["Time", "Order ID", "Product", "Side", "Size", "Price", "Value", "Status"],
+                tablefmt="grid"
+            ))
+
+            # Summary statistics
+            filled_orders = [o for o in orders if o.status == 'FILLED']
+            cancelled_orders = [o for o in orders if o.status == 'CANCELLED']
+
+            print_subheader("\nSummary:")
+            print(f"Total Orders: {len(orders)}")
+            print(f"{format_status('FILLED')}: {len(filled_orders)}")
+            print(f"{format_status('CANCELLED')}: {len(cancelled_orders)}")
+
+        except CancelledException:
+            print_info("\nCancelled. Returning to main menu.")
+        except Exception as e:
+            logging.error(f"Error viewing order history: {str(e)}", exc_info=True)
+            print_error(f"Error viewing order history: {str(e)}")
 
     def show_and_cancel_orders(self):
         """Display active orders and allow cancellation."""
         if not self.client:
             logging.warning("Attempt to show/cancel orders without login")
-            print("Please login first.")
+            print_warning("Please login first.")
             return
 
         try:
             self._show_and_cancel_orders_impl()
         except CancelledException:
             logging.info("Show and cancel orders cancelled by user")
-            print("\nCancelled. Returning to main menu.")
+            print_info("\nCancelled. Returning to main menu.")
 
     def _show_and_cancel_orders_impl(self):
         """Internal implementation of show_and_cancel_orders with cancellation support."""
         try:
             active_orders = self.get_active_orders()
-            
+
             if not active_orders:
                 logging.info("No active orders found")
-                print("No active orders found.")
+                print_info("No active orders found.")
                 return
 
             # Display orders
@@ -1107,13 +1402,13 @@ class TradingTerminal:
                     i,
                     order.order_id,
                     order.product_id,
-                    order.side,
+                    format_side(order.side),
                     size,
                     price,
-                    order.status
+                    format_status(order.status)
                 ])
 
-            print("\nActive Orders:")
+            print_header("\nActive Orders")
             print(tabulate(table_data, headers=["Number", "Order ID", "Product", "Side", "Size", "Price", "Status"], tablefmt="grid"))
 
             while True:
@@ -1127,7 +1422,7 @@ class TradingTerminal:
                     if hasattr(result, 'results'):
                         cancelled_count = len(result.results)
                         logging.info(f"Cancelled {cancelled_count} orders")
-                        print(f"Cancelled {cancelled_count} orders.")
+                        print_success(f"Cancelled {cancelled_count} orders.")
                     break
                 elif action == 'yes':
                     order_number = self.get_input("Enter the Number of the order to cancel")
@@ -1136,42 +1431,42 @@ class TradingTerminal:
                         if 0 <= order_index < len(active_orders):
                             order_id = active_orders[order_index].order_id
                             result = self.client.cancel_orders([order_id])
-                            
+
                             if result and hasattr(result, 'results') and result.results:
                                 logging.info(f"Order {order_id} cancelled successfully")
-                                print(f"Order {order_id} cancelled successfully.")
+                                print_success(f"Order {order_id} cancelled successfully.")
                                 active_orders = self.get_active_orders()
                                 if not active_orders:
                                     break
                             else:
                                 logging.error(f"Failed to cancel order {order_id}")
-                                print(f"Failed to cancel order {order_id}.")
+                                print_error(f"Failed to cancel order {order_id}.")
                         else:
-                            print("Invalid order number.")
+                            print_warning("Invalid order number.")
                     except ValueError:
-                        print("Please enter a valid order number.")
+                        print_warning("Please enter a valid order number.")
                 else:
-                    print("Invalid input. Please enter 'yes', 'no', or 'all'.")
+                    print_warning("Invalid input. Please enter 'yes', 'no', or 'all'.")
 
         except Exception as e:
             logging.error(f"Error managing orders: {str(e)}")
-            print(f"Error managing orders: {str(e)}")        
+            print_error(f"Error managing orders: {str(e)}")        
 
     def view_portfolio(self):
         """View and display the user's portfolio."""
         if not self.client:
             logging.warning("Attempt to view portfolio without login")
-            print("Please login first.")
+            print_warning("Please login first.")
             return
 
         try:
             logging.info("Fetching accounts for portfolio view")
-            print("\nFetching accounts (this may take a moment due to rate limiting):")
+            print_info("\nFetching accounts (this may take a moment due to rate limiting)...")
             accounts = self.get_accounts(force_refresh=True)
             self.display_portfolio(accounts)
         except Exception as e:
             logging.error(f"Error fetching portfolio: {str(e)}")
-            print(f"Error fetching portfolio: {str(e)}")
+            print_error(f"Error fetching portfolio: {str(e)}")
 
     def display_portfolio(self, accounts_data):
         """
@@ -1225,15 +1520,16 @@ class TradingTerminal:
         table_data = [[f"{row[0]} ({row[1]:.8f})", f"${row[2]:.2f}"] for row in portfolio_data]
 
         logging.info(f"Portfolio summary generated. Total value: ${total_usd_value:.2f} USD")
-        print("\nPortfolio Summary:")
-        print(f"Total Portfolio Value: ${total_usd_value:.2f} USD")
-        print("\nAsset Balances:")
+        print_header("\nPortfolio Summary")
+        print(f"Total Portfolio Value: {highlight(format_currency(total_usd_value, colored=False))}")
+        print_subheader("\nAsset Balances:")
         print(tabulate(table_data, headers=["Asset (Amount)", "USD Value"], tablefmt="grid"))
 
     def login(self):
         """Authenticate user and initialize the API client."""
         logging.info("Initiating login process")
-        print("Welcome to the Coinbase Trading Terminal!")
+        print_header("Welcome to the Coinbase Trading Terminal!")
+        print_info("Authenticating with Coinbase API...")
 
         try:
             # If client already provided via dependency injection, skip initialization
@@ -1273,22 +1569,22 @@ class TradingTerminal:
 
             # If we get here, authentication was successful
             logging.info("Login successful")
-            print("Login successful!")
+            print_success("Login successful!")
             return True
 
         except ConfigurationError as e:
             logging.error(f"Configuration error: {str(e)}", exc_info=True)
-            print(f"\nConfiguration Error:\n{str(e)}")
+            print_error(f"\nConfiguration Error:\n{str(e)}")
             self.client = None
             return False
         except AttributeError as e:
             logging.error(f"API credentials error: {str(e)}", exc_info=True)
-            print("Error accessing API credentials. Please check your configuration.")
+            print_error("Error accessing API credentials. Please check your configuration.")
             self.client = None
             return False
         except Exception as e:
             logging.error(f"Login failed: {str(e)}", exc_info=True)
-            print(f"Login failed: {str(e)}")
+            print_error(f"Login failed: {str(e)}")
             self.client = None
             return False
 
@@ -1390,14 +1686,14 @@ class TradingTerminal:
         """Place a Time-Weighted Average Price (TWAP) order with comprehensive logging."""
         if not self.client:
             logging.warning("Attempt to place TWAP order without login")
-            print("Please login first.")
+            print_warning("Please login first.")
             return None
 
         try:
             return self._place_twap_order_impl()
         except CancelledException:
             logging.info("TWAP order placement cancelled by user")
-            print("\nTWAP order placement cancelled. Returning to main menu.")
+            print_info("\nTWAP order placement cancelled. Returning to main menu.")
             return None
 
     def _place_twap_order_impl(self):
@@ -2074,17 +2370,18 @@ class TradingTerminal:
                 return
                     
             while True:
-                print("\nWhat would you like to do?")
+                print_header("\nMain Menu")
                 print("1. View portfolio balances")
                 print("2. Place a limit order")
                 print("3. Place a TWAP order")
                 print("4. Check TWAP order fills")
                 print("5. Show and cancel active orders")
+                print(f"{success('6. View order history')}")
 
                 try:
-                    choice = self.get_input("Enter your choice (1-5)")
+                    choice = self.get_input("Enter your choice (1-6)")
                 except CancelledException:
-                    print("\nExiting application.")
+                    print_info("\nExiting application.")
                     break
 
                 if choice == '1':
@@ -2097,7 +2394,7 @@ class TradingTerminal:
                 elif choice == '3':
                     twap_id = self.place_twap_order()
                     if twap_id:
-                        print(f"TWAP order placed with ID: {twap_id}")
+                        print_success(f"TWAP order placed with ID: {highlight(twap_id)}")
                 elif choice == '4':
                     try:
                         twap_ids = self.display_all_twap_orders()
@@ -2109,15 +2406,17 @@ class TradingTerminal:
                                     twap_id = twap_ids[twap_index]
                                     self.check_twap_order_fills(twap_id)
                                 else:
-                                    print("Invalid TWAP order number.")
+                                    print_warning("Invalid TWAP order number.")
                             except ValueError:
-                                print("Please enter a valid number.")
+                                print_warning("Please enter a valid number.")
                     except CancelledException:
-                        print("\nCancelled. Returning to main menu.")
+                        print_info("\nCancelled. Returning to main menu.")
                 elif choice == '5':
                     self.show_and_cancel_orders()
+                elif choice == '6':
+                    self.view_order_history()
                 else:
-                    print("Invalid choice. Please try again.")
+                    print_warning("Invalid choice. Please try again.")
         except Exception as e:
             logging.error(f"Critical error in main execution: {str(e)}", exc_info=True)
         finally:

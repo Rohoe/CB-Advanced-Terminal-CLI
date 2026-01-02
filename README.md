@@ -4,17 +4,29 @@ A Python-based command-line trading terminal for Coinbase Advanced Trade API wit
 
 ## Features
 
-- **Portfolio Management**: View account balances and USD valuations
+- **Portfolio Management**: View account balances and USD valuations with color-coded display
 - **Limit Orders**: Place and manage limit orders across all trading pairs
+  - Enhanced order preview with estimated fees (maker/taker rates)
+  - Total cost/proceeds calculation including fees
+  - Color-coded order confirmations
 - **TWAP Orders**: Execute large orders over time to minimize market impact
   - Configurable number of slices and duration
   - Multiple price execution modes (limit, bid, mid, ask)
   - Detailed execution statistics and fill tracking
   - Automatic order persistence and recovery
-- **Order Management**: View and cancel active orders
+- **Order History**: View historical orders with advanced filtering
+  - Filter by product, status, or both
+  - Color-coded order sides (BUY/SELL) and statuses
+  - Summary statistics (filled, cancelled, etc.)
+- **Order Management**: View and cancel active orders with color-coded status
 - **Rate Limiting**: Built-in token bucket rate limiter to prevent API throttling
 - **Comprehensive Logging**: Detailed logging to files for audit and debugging
 - **Intelligent Caching**: Optimized API usage through strategic caching
+- **Enhanced UI**: Color-coded terminal output for better readability
+  - Green for success messages and positive values
+  - Red for errors and warnings
+  - Cyan for informational messages
+  - Magenta for highlighted content
 
 ## Prerequisites
 
@@ -110,11 +122,11 @@ When you start the application:
 ### Main Menu Options
 
 1. **View Portfolio Balances** - Display all account balances with USD valuations
-2. **Place a Limit Order** - Execute a single limit order
+2. **Place a Limit Order** - Execute a single limit order with fee preview
 3. **Place a TWAP Order** - Execute a time-weighted average price order
 4. **Check TWAP Order Fills** - View detailed execution statistics for TWAP orders
 5. **Show and Cancel Active Orders** - Manage open orders
-6. **Exit** - Safely shutdown the terminal
+6. **View Order History** - View past orders with filtering options
 
 ### Placing a TWAP Order
 
@@ -150,6 +162,32 @@ Price Mode: Market mid
 Result: 12 orders of ~0.00833 BTC each, placed every 5 minutes
 ```
 
+### Viewing Order History
+
+Access comprehensive order history with flexible filtering:
+
+1. Select **option 6** from the main menu
+2. Choose filter criteria:
+   - All orders (last 100)
+   - Filter by specific product
+   - Filter by order status (FILLED, CANCELLED, EXPIRED, FAILED)
+   - Combine product and status filters
+3. View color-coded results with:
+   - Order timestamps
+   - Product, side (BUY/SELL), size, and price
+   - Calculated order value
+   - Order status
+   - Summary statistics
+
+### Enhanced Order Preview
+
+When placing limit orders, you'll now see:
+- Estimated maker fee (0.4% default)
+- Estimated taker fee (0.6% default)
+- Total cost/proceeds including fees
+- Best/worst case scenarios
+- Color-coded order summary
+
 ## Project Structure
 
 ```
@@ -161,6 +199,7 @@ CB-Advanced-Terminal/
 ├── validators.py       # Input validation
 ├── api_client.py       # API client abstraction
 ├── storage.py          # Storage abstraction
+├── ui_helpers.py       # Terminal UI color utilities
 ├── requirements.txt    # Python dependencies
 ├── requirements-dev.txt # Testing dependencies
 ├── .env.example        # Environment variable template
@@ -169,6 +208,7 @@ CB-Advanced-Terminal/
 ├── README.md          # This file
 ├── TESTING.md         # Testing guide
 ├── TODO.md            # Future improvements
+├── ENHANCEMENTS.md    # Future enhancement ideas
 ├── logs/              # Application logs (auto-generated)
 ├── twap_data/         # TWAP order persistence (auto-generated)
 │   ├── orders/        # TWAP order metadata
