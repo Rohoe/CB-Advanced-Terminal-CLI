@@ -2150,7 +2150,10 @@ class TradingTerminal:
 
             # Check response
             if hasattr(response, 'success') and not response.success:
-                error_msg = response.error_response.message if hasattr(response, 'error_response') else "Unknown error"
+                # error_response is a dict, not an object
+                error_msg = "Unknown error"
+                if hasattr(response, 'error_response') and response.error_response:
+                    error_msg = response.error_response.get('message', 'Unknown error')
                 print_error(f"Failed to place order: {error_msg}")
                 logging.error(f"Order placement failed: {error_msg}")
                 return None
@@ -2311,7 +2314,10 @@ class TradingTerminal:
 
             # Check response
             if hasattr(response, 'success') and not response.success:
-                error_msg = response.error_response.message if hasattr(response, 'error_response') else "Unknown error"
+                # error_response is a dict, not an object
+                error_msg = "Unknown error"
+                if hasattr(response, 'error_response') and response.error_response:
+                    error_msg = response.error_response.get('message', 'Unknown error')
                 print_error(f"Failed to place order: {error_msg}")
                 return None
 
@@ -2468,7 +2474,10 @@ class TradingTerminal:
 
             # Check response
             if hasattr(response, 'success') and not response.success:
-                error_msg = response.error_response.message if hasattr(response, 'error_response') else "Unknown error"
+                # error_response is a dict, not an object
+                error_msg = "Unknown error"
+                if hasattr(response, 'error_response') and response.error_response:
+                    error_msg = response.error_response.get('message', 'Unknown error')
                 print_error(f"Failed to place bracket order: {error_msg}")
                 return None
 
@@ -2645,7 +2654,10 @@ class TradingTerminal:
 
             # Check response
             if hasattr(response, 'success') and not response.success:
-                error_msg = response.error_response.message if hasattr(response, 'error_response') else "Unknown error"
+                # error_response is a dict, not an object
+                error_msg = "Unknown error"
+                if hasattr(response, 'error_response') and response.error_response:
+                    error_msg = response.error_response.get('message', 'Unknown error')
                 print_error(f"Failed to place order: {error_msg}")
                 return None
 
