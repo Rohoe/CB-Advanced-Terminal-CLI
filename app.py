@@ -2047,7 +2047,7 @@ class TradingTerminal:
 
             product_id = order_input["product_id"]
             side = order_input["side"]
-            base_size = order_input["base_size"]
+            base_size = str(order_input["base_size"])  # Convert to string for API
 
             # Fetch current price for validation
             current_prices = self.get_current_prices(product_id)
@@ -2224,7 +2224,7 @@ class TradingTerminal:
 
             product_id = order_input["product_id"]
             side = order_input["side"]
-            base_size = order_input["base_size"]
+            base_size = str(order_input["base_size"])  # Convert to string for API
 
             # Fetch current price
             current_prices = self.get_current_prices(product_id)
@@ -2540,7 +2540,7 @@ class TradingTerminal:
 
             product_id = order_input["product_id"]
             side = order_input["side"]
-            base_size = order_input["base_size"]
+            base_size = str(order_input["base_size"])  # Convert to string for API
             entry_price = float(order_input["limit_price"])
 
             # Fetch current price
@@ -2902,7 +2902,8 @@ class TradingTerminal:
                     success = False
                     if hasattr(response, 'results') and response.results:
                         result = response.results[0]
-                        success = result.get('success', False)
+                        # CancelOrderObject has attributes, not dict methods
+                        success = getattr(result, 'success', False)
 
                     if success:
                         # Update tracker
@@ -2921,7 +2922,8 @@ class TradingTerminal:
                         print_success(f"Cancelled: {order_id[:12]}...")
                         cancelled_count += 1
                     else:
-                        error_msg = result.get('failure_reason', 'Unknown error') if hasattr(response, 'results') else "Unknown error"
+                        # Get error message from CancelOrderObject attributes
+                        error_msg = getattr(result, 'failure_reason', 'Unknown error') if hasattr(response, 'results') else "Unknown error"
                         print_error(f"Failed to cancel {order_id[:12]}...: {error_msg}")
                         failed_count += 1
 
@@ -3203,7 +3205,8 @@ class TradingTerminal:
                     success = False
                     if hasattr(response, 'results') and response.results:
                         result = response.results[0]
-                        success = result.get('success', False)
+                        # CancelOrderObject has attributes, not dict methods
+                        success = getattr(result, 'success', False)
 
                     if success:
                         # Update conditional order tracker if needed
@@ -3223,7 +3226,8 @@ class TradingTerminal:
                         print_success(f"Cancelled: {order_id[:12]}...")
                         cancelled_count += 1
                     else:
-                        error_msg = result.get('failure_reason', 'Unknown error') if hasattr(response, 'results') else "Unknown error"
+                        # Get error message from CancelOrderObject attributes
+                        error_msg = getattr(result, 'failure_reason', 'Unknown error') if hasattr(response, 'results') else "Unknown error"
                         print_error(f"Failed to cancel {order_id[:12]}...: {error_msg}")
                         failed_count += 1
 
