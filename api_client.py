@@ -164,6 +164,156 @@ class APIClient(ABC):
         """
         pass
 
+    @abstractmethod
+    def stop_limit_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """
+        Place a stop-limit order (Good-Til-Cancelled).
+
+        This method handles both stop-loss and take-profit orders using
+        the stop_direction parameter.
+
+        Args:
+            client_order_id: Unique order identifier
+            product_id: Trading pair (e.g., "BTC-USD")
+            side: "BUY" or "SELL"
+            base_size: Order size as string
+            limit_price: Execution price after trigger
+            stop_price: Trigger price
+            stop_direction: "STOP_DIRECTION_STOP_UP" or "STOP_DIRECTION_STOP_DOWN"
+
+        Returns:
+            CreateOrderResponse object with order details
+        """
+        pass
+
+    @abstractmethod
+    def stop_limit_order_gtc_buy(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """
+        Place a BUY stop-limit order (convenience method).
+
+        Args:
+            client_order_id: Unique order identifier
+            product_id: Trading pair
+            base_size: Order size as string
+            limit_price: Execution price after trigger
+            stop_price: Trigger price
+            stop_direction: Stop direction
+
+        Returns:
+            CreateOrderResponse object
+        """
+        pass
+
+    @abstractmethod
+    def stop_limit_order_gtc_sell(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """
+        Place a SELL stop-limit order (convenience method).
+
+        Args:
+            client_order_id: Unique order identifier
+            product_id: Trading pair
+            base_size: Order size as string
+            limit_price: Execution price after trigger
+            stop_price: Trigger price
+            stop_direction: Stop direction
+
+        Returns:
+            CreateOrderResponse object
+        """
+        pass
+
+    @abstractmethod
+    def trigger_bracket_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_trigger_price: str
+    ) -> Any:
+        """
+        Place a bracket order (TP/SL for existing position).
+
+        NOTE: This creates TP/SL for an EXISTING position.
+        For entry + TP/SL, use create_order() with attached_order_configuration.
+
+        Args:
+            client_order_id: Unique order identifier
+            product_id: Trading pair
+            side: "BUY" or "SELL" (side of the position)
+            base_size: Position size as string
+            limit_price: Take-profit price
+            stop_trigger_price: Stop-loss trigger price
+
+        Returns:
+            CreateOrderResponse object
+        """
+        pass
+
+    @abstractmethod
+    def create_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        order_configuration: dict,
+        attached_order_configuration: Optional[dict] = None
+    ) -> Any:
+        """
+        Generic order creation with optional attached TP/SL bracket.
+
+        Example for entry + TP/SL:
+            order_configuration = {
+                "limit_limit_gtc": {
+                    "baseSize": "0.01",
+                    "limitPrice": "50000"
+                }
+            }
+            attached_order_configuration = {
+                "trigger_bracket_gtc": {
+                    "limit_price": "55000",      # Take profit
+                    "stop_trigger_price": "48000"  # Stop loss
+                }
+            }
+
+        Args:
+            client_order_id: Unique order identifier
+            product_id: Trading pair
+            side: "BUY" or "SELL"
+            order_configuration: Main order config dict
+            attached_order_configuration: Optional TP/SL bracket config
+
+        Returns:
+            CreateOrderResponse object
+        """
+        pass
+
 
 class CoinbaseAPIClient(APIClient):
     """
@@ -259,6 +409,109 @@ class CoinbaseAPIClient(APIClient):
     def get_transaction_summary(self) -> Any:
         """Get transaction summary including fee tiers."""
         return self._client.get_transaction_summary()
+
+    def stop_limit_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a stop-limit order (Good-Til-Cancelled)."""
+        return self._client.stop_limit_order_gtc(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            side=side,
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            stop_direction=stop_direction
+        )
+
+    def stop_limit_order_gtc_buy(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a BUY stop-limit order (convenience method)."""
+        return self._client.stop_limit_order_gtc_buy(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            stop_direction=stop_direction
+        )
+
+    def stop_limit_order_gtc_sell(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a SELL stop-limit order (convenience method)."""
+        return self._client.stop_limit_order_gtc_sell(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            stop_direction=stop_direction
+        )
+
+    def trigger_bracket_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_trigger_price: str
+    ) -> Any:
+        """Place a bracket order (TP/SL for existing position)."""
+        return self._client.trigger_bracket_order_gtc(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            side=side,
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_trigger_price=stop_trigger_price
+        )
+
+    def create_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        order_configuration: dict,
+        attached_order_configuration: Optional[dict] = None
+    ) -> Any:
+        """Generic order creation with optional attached TP/SL bracket."""
+        if attached_order_configuration:
+            return self._client.create_order(
+                client_order_id=client_order_id,
+                product_id=product_id,
+                side=side,
+                order_configuration=order_configuration,
+                attached_order_configuration=attached_order_configuration
+            )
+        else:
+            return self._client.create_order(
+                client_order_id=client_order_id,
+                product_id=product_id,
+                side=side,
+                order_configuration=order_configuration
+            )
 
 
 class APIClientFactory:
