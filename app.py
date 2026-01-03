@@ -2158,8 +2158,10 @@ class TradingTerminal:
                 logging.error(f"Order placement failed: {error_msg}")
                 return None
 
-            # Extract order ID
-            order_id = response.success_response.order_id if hasattr(response, 'success_response') else None
+            # Extract order ID (success_response is a dict)
+            order_id = None
+            if hasattr(response, 'success_response') and response.success_response:
+                order_id = response.success_response.get('order_id')
             if not order_id:
                 print_error("Order placed but no order ID returned.")
                 logging.error("No order ID in response")
@@ -2321,8 +2323,10 @@ class TradingTerminal:
                 print_error(f"Failed to place order: {error_msg}")
                 return None
 
-            # Extract order ID
-            order_id = response.success_response.order_id if hasattr(response, 'success_response') else None
+            # Extract order ID (success_response is a dict)
+            order_id = None
+            if hasattr(response, 'success_response') and response.success_response:
+                order_id = response.success_response.get('order_id')
             if not order_id:
                 print_error("Order placed but no order ID returned.")
                 return None
@@ -2481,8 +2485,10 @@ class TradingTerminal:
                 print_error(f"Failed to place bracket order: {error_msg}")
                 return None
 
-            # Extract order ID
-            order_id = response.success_response.order_id if hasattr(response, 'success_response') else None
+            # Extract order ID (success_response is a dict)
+            order_id = None
+            if hasattr(response, 'success_response') and response.success_response:
+                order_id = response.success_response.get('order_id')
             if not order_id:
                 print_error("Order placed but no order ID returned.")
                 return None
@@ -2661,8 +2667,10 @@ class TradingTerminal:
                 print_error(f"Failed to place order: {error_msg}")
                 return None
 
-            # Extract order ID
-            order_id = response.success_response.order_id if hasattr(response, 'success_response') else None
+            # Extract order ID (success_response is a dict)
+            order_id = None
+            if hasattr(response, 'success_response') and response.success_response:
+                order_id = response.success_response.get('order_id')
             if not order_id:
                 print_error("Order placed but no order ID returned.")
                 return None
