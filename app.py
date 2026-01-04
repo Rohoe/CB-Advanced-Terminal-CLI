@@ -2129,9 +2129,6 @@ class TradingTerminal:
 
             current_price = current_prices['mid']
 
-            # Display market conditions
-            self._display_market_conditions(product_id, side, current_prices)
-
             # Get stop price (trigger price)
             stop_price_str = self.get_input(f"\nEnter stop price (trigger when price reaches this level)")
             try:
@@ -2317,9 +2314,6 @@ class TradingTerminal:
                 return None
 
             current_price = current_prices['mid']
-
-            # Display market conditions
-            self._display_market_conditions(product_id, side, current_prices)
 
             # Get stop price (trigger price) - for take-profit, this should be ABOVE current for SELL
             stop_price_str = self.get_input(f"\nEnter take-profit price (trigger when price reaches this level)")
@@ -3781,6 +3775,11 @@ class TradingTerminal:
                 if side in ['BUY', 'SELL']:
                     break
                 print("Invalid side. Please enter 'buy' or 'sell'.")
+
+            # Display market conditions (helps user decide on size)
+            current_prices = self.get_current_prices(product_id)
+            if current_prices:
+                self._display_market_conditions(product_id, side, current_prices)
 
             # Get order size
             while True:
