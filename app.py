@@ -621,6 +621,71 @@ class TradingTerminal:
                 }
             logging.debug(f"Registered order {order_id} for TWAP {twap_id}")
 
+    def _display_market_conditions(self, product_id: str, side: str, current_prices: dict = None):
+        """
+        Display current market conditions including prices and balance information.
+
+        Args:
+            product_id: The trading pair (e.g., 'BTC-USDC')
+            side: The order side ('BUY' or 'SELL')
+            current_prices: Optional dict with 'bid', 'ask', 'mid' prices. If None, will fetch.
+        """
+        try:
+            base_currency = product_id.split('-')[0]
+            quote_currency = product_id.split('-')[1]
+
+            # Fetch current prices if not provided
+            if not current_prices:
+                current_prices = self.get_current_prices(product_id)
+                if not current_prices:
+                    print_warning("Unable to fetch current market prices.")
+                    return
+
+            # Get balances with rate limiting
+            self.rate_limiter.wait()
+            base_balance = self.get_account_balance(base_currency)
+            self.rate_limiter.wait()
+            quote_balance = self.get_account_balance(quote_currency)
+
+            print("\nCurrent Market Conditions:")
+            print("=" * 50)
+            print(f"Current prices for {product_id}:")
+            print(f"Bid: ${current_prices['bid']:.2f}")
+            print(f"Ask: ${current_prices['ask']:.2f}")
+            print(f"Mid: ${current_prices['mid']:.2f}")
+            print("-" * 50)
+
+            if side == 'BUY':
+                potential_size = quote_balance / current_prices['ask']  # Use ask price for buying
+                print(f"Available {quote_currency}: {quote_balance:.2f}")
+                print(f"Maximum {base_currency} you can buy at current ask: {potential_size:.8f}")
+
+                # Show example trade sizes at different percentages
+                print("\nExample trade sizes:")
+                percentages = [25, 50, 75, 100]
+                for pct in percentages:
+                    size = (potential_size * pct) / 100
+                    cost = size * current_prices['ask']
+                    print(f"{pct}% - Size: {size:.8f} {base_currency} (Cost: ${cost:.2f} {quote_currency})")
+            else:  # SELL
+                potential_value = base_balance * current_prices['bid']  # Use bid price for selling
+                print(f"Available {base_currency}: {base_balance:.8f}")
+                print(f"Total value at current bid: ${potential_value:.2f}")
+
+                # Show example trade sizes at different percentages
+                print("\nExample trade sizes:")
+                percentages = [25, 50, 75, 100]
+                for pct in percentages:
+                    size = (base_balance * pct) / 100
+                    value = size * current_prices['bid']
+                    print(f"{pct}% - Size: {size:.8f} {base_currency} (Value: ${value:.2f} {quote_currency})")
+
+            print("=" * 50)
+
+        except Exception as e:
+            logging.error(f"Error displaying market conditions: {str(e)}")
+            print_warning("Error displaying market conditions. Continuing...")
+
     def place_limit_order(self):
         """Place a limit order with user input."""
         if not self.client:
@@ -1623,14 +1688,15 @@ class TradingTerminal:
 
                     # Thread-safe check for TWAP order
                     with self.twap_lock:
-                        is_twap_order = order.get('order_id') in self.order_to_twap_map
+                        order_id = order if isinstance(order, str) else order.get('order_id')
+                        is_twap_order = order_id and order_id in self.order_to_twap_map
 
                     # Thread-safe check for conditional order
                     with self.conditional_lock:
                         is_conditional_order = order in self.order_to_conditional_map or (isinstance(order, dict) and order.get('order_id') in self.order_to_conditional_map)
 
                     if is_twap_order:
-                        logging.debug(f"Processing TWAP order: {order.get('order_id')}")
+                        logging.debug(f"Processing TWAP order: {order_id}")
                         orders_to_check = [order]
 
                         # Collect additional orders for batch processing
@@ -1641,21 +1707,25 @@ class TradingTerminal:
                                     return
                                 # Thread-safe check
                                 with self.twap_lock:
-                                    is_twap = order.get('order_id') in self.order_to_twap_map
+                                    order_id = order if isinstance(order, str) else order.get('order_id')
+                                    is_twap = order_id and order_id in self.order_to_twap_map
                                 if is_twap:
                                     orders_to_check.append(order)
                             except Empty:
                                 break
 
                         # Process orders in batch
-                        order_ids = [order['order_id'] for order in orders_to_check
-                                if 'order_id' in order]
+                        order_ids = []
+                        for o in orders_to_check:
+                            oid = o if isinstance(o, str) else o.get('order_id')
+                            if oid:
+                                order_ids.append(oid)
 
                         fills = self.check_order_fills_batch(order_ids)
 
                         # Update TWAP tracking for each order
                         for order_data in orders_to_check:
-                            order_id = order_data.get('order_id')
+                            order_id = order_data if isinstance(order_data, str) else order_data.get('order_id')
                             if not order_id:
                                 continue
 
@@ -1687,7 +1757,7 @@ class TradingTerminal:
 
                         # Requeue unfilled orders
                         for order_data in orders_to_check:
-                            order_id = order_data.get('order_id')
+                            order_id = order_data if isinstance(order_data, str) else order_data.get('order_id')
                             if order_id and order_id not in self.filled_orders:
                                 self.order_queue.put(order_data)
 
@@ -1771,17 +1841,19 @@ class TradingTerminal:
         if not order_input:
             return None
 
+        product_id = order_input["product_id"]
+
         # Get account balances
-        base_currency = order_input["product_id"].split('-')[0]
-        quote_currency = order_input["product_id"].split('-')[1]
+        base_currency = product_id.split('-')[0]
+        quote_currency = product_id.split('-')[1]
         base_balance = self.get_account_balance(base_currency)
         quote_balance = self.get_account_balance(quote_currency)
-        
+
         logging.info(f"Account Balances:")
         logging.info(f"{base_currency} Balance: {base_balance:.8f}")
         logging.info(f"{quote_currency} Balance: {quote_balance:.8f}")
 
-        duration = int(self.get_input("Enter TWAP duration in minutes"))
+        duration = int(self.get_input("\nEnter TWAP duration in minutes"))
         num_slices = int(self.get_input("Enter number of slices for TWAP"))
 
         # Get product information for validation
@@ -2056,7 +2128,9 @@ class TradingTerminal:
                 return None
 
             current_price = current_prices['mid']
-            print(f"\nCurrent market price: {format_currency(current_price)}")
+
+            # Display market conditions
+            self._display_market_conditions(product_id, side, current_prices)
 
             # Get stop price (trigger price)
             stop_price_str = self.get_input(f"\nEnter stop price (trigger when price reaches this level)")
@@ -2122,10 +2196,15 @@ class TradingTerminal:
                 print_info("Order cancelled.")
                 return None
 
+            # Round prices and size to proper precision for the product
+            rounded_stop_price = self.round_price(stop_price, product_id)
+            rounded_limit_price = self.round_price(limit_price, product_id)
+            rounded_size = self.round_size(float(base_size), product_id)
+
             # Place the order
             client_order_id = f"sl-{str(uuid.uuid4())[:8]}"
 
-            logging.info(f"Placing {order_type_display} order: {side} {base_size} {product_id} @ stop={stop_price}, limit={limit_price}")
+            logging.info(f"Placing {order_type_display} order: {side} {rounded_size} {product_id} @ stop={rounded_stop_price}, limit={rounded_limit_price}")
 
             self.rate_limiter.wait()
 
@@ -2133,18 +2212,18 @@ class TradingTerminal:
                 response = self.client.stop_limit_order_gtc_sell(
                     client_order_id=client_order_id,
                     product_id=product_id,
-                    base_size=base_size,
-                    limit_price=limit_price_str,
-                    stop_price=stop_price_str,
+                    base_size=str(rounded_size),
+                    limit_price=str(rounded_limit_price),
+                    stop_price=str(rounded_stop_price),
                     stop_direction=stop_direction
                 )
             else:  # BUY
                 response = self.client.stop_limit_order_gtc_buy(
                     client_order_id=client_order_id,
                     product_id=product_id,
-                    base_size=base_size,
-                    limit_price=limit_price_str,
-                    stop_price=stop_price_str,
+                    base_size=str(rounded_size),
+                    limit_price=str(rounded_limit_price),
+                    stop_price=str(rounded_stop_price),
                     stop_direction=stop_direction
                 )
 
@@ -2173,9 +2252,9 @@ class TradingTerminal:
                 client_order_id=client_order_id,
                 product_id=product_id,
                 side=side,
-                base_size=base_size,
-                stop_price=stop_price_str,
-                limit_price=limit_price_str,
+                base_size=str(rounded_size),
+                stop_price=str(rounded_stop_price),
+                limit_price=str(rounded_limit_price),
                 stop_direction=stop_direction,
                 order_type=order_type_display,
                 status="PENDING",
@@ -2193,7 +2272,7 @@ class TradingTerminal:
             # Display success
             print_success(f"\n{order_type_display} order placed successfully!")
             print(f"Order ID: {order_id}")
-            print(f"Status: Pending (waiting for trigger at {format_currency(stop_price)})")
+            print(f"Status: Pending (waiting for trigger at {format_currency(rounded_stop_price)})")
 
             logging.info(f"{order_type_display} order placed: {order_id}")
 
@@ -2238,7 +2317,9 @@ class TradingTerminal:
                 return None
 
             current_price = current_prices['mid']
-            print(f"\nCurrent market price: {format_currency(current_price)}")
+
+            # Display market conditions
+            self._display_market_conditions(product_id, side, current_prices)
 
             # Get stop price (trigger price) - for take-profit, this should be ABOVE current for SELL
             stop_price_str = self.get_input(f"\nEnter take-profit price (trigger when price reaches this level)")
@@ -2288,10 +2369,15 @@ class TradingTerminal:
                 print_info("Order cancelled.")
                 return None
 
+            # Round prices and size to proper precision for the product
+            rounded_stop_price = self.round_price(stop_price, product_id)
+            rounded_limit_price = self.round_price(limit_price, product_id)
+            rounded_size = self.round_size(float(base_size), product_id)
+
             # Place the order
             client_order_id = f"tp-{str(uuid.uuid4())[:8]}"
 
-            logging.info(f"Placing TAKE_PROFIT order: {side} {base_size} {product_id} @ stop={stop_price}, limit={limit_price}")
+            logging.info(f"Placing TAKE_PROFIT order: {side} {rounded_size} {product_id} @ stop={rounded_stop_price}, limit={rounded_limit_price}")
 
             self.rate_limiter.wait()
 
@@ -2299,18 +2385,18 @@ class TradingTerminal:
                 response = self.client.stop_limit_order_gtc_sell(
                     client_order_id=client_order_id,
                     product_id=product_id,
-                    base_size=base_size,
-                    limit_price=limit_price_str,
-                    stop_price=stop_price_str,
+                    base_size=str(rounded_size),
+                    limit_price=str(rounded_limit_price),
+                    stop_price=str(rounded_stop_price),
                     stop_direction=stop_direction
                 )
             else:  # BUY
                 response = self.client.stop_limit_order_gtc_buy(
                     client_order_id=client_order_id,
                     product_id=product_id,
-                    base_size=base_size,
-                    limit_price=limit_price_str,
-                    stop_price=stop_price_str,
+                    base_size=str(rounded_size),
+                    limit_price=str(rounded_limit_price),
+                    stop_price=str(rounded_stop_price),
                     stop_direction=stop_direction
                 )
 
@@ -2337,9 +2423,9 @@ class TradingTerminal:
                 client_order_id=client_order_id,
                 product_id=product_id,
                 side=side,
-                base_size=base_size,
-                stop_price=stop_price_str,
-                limit_price=limit_price_str,
+                base_size=str(rounded_size),
+                stop_price=str(rounded_stop_price),
+                limit_price=str(rounded_limit_price),
                 stop_direction=stop_direction,
                 order_type=order_type_display,
                 status="PENDING",
@@ -2357,7 +2443,7 @@ class TradingTerminal:
             # Display success
             print_success(f"\nTAKE_PROFIT order placed successfully!")
             print(f"Order ID: {order_id}")
-            print(f"Status: Pending (waiting for trigger at {format_currency(stop_price)})")
+            print(f"Status: Pending (waiting for trigger at {format_currency(rounded_stop_price)})")
 
             logging.info(f"TAKE_PROFIT order placed: {order_id}")
 
@@ -2403,7 +2489,9 @@ class TradingTerminal:
                 return None
 
             current_price = current_prices['mid']
-            print(f"\nCurrent market price: {format_currency(current_price)}")
+
+            # Display market conditions
+            self._display_market_conditions(product_id, side, current_prices)
 
             # Get take-profit price
             tp_price_str = self.get_input("\nEnter take-profit price (exit when price reaches this level)")
@@ -2460,10 +2548,15 @@ class TradingTerminal:
                 print_info("Order cancelled.")
                 return None
 
+            # Round prices and size to proper precision for the product
+            rounded_tp_price = self.round_price(tp_price, product_id)
+            rounded_sl_price = self.round_price(sl_price, product_id)
+            rounded_size = self.round_size(float(base_size), product_id)
+
             # Place the bracket order
             client_order_id = f"bracket-{str(uuid.uuid4())[:8]}"
 
-            logging.info(f"Placing bracket order: {side} {base_size} {product_id} @ TP={tp_price}, SL={sl_price}")
+            logging.info(f"Placing bracket order: {side} {rounded_size} {product_id} @ TP={rounded_tp_price}, SL={rounded_sl_price}")
 
             self.rate_limiter.wait()
 
@@ -2471,9 +2564,9 @@ class TradingTerminal:
                 client_order_id=client_order_id,
                 product_id=product_id,
                 side=side,
-                base_size=base_size,
-                limit_price=tp_price_str,
-                stop_trigger_price=sl_price_str
+                base_size=str(rounded_size),
+                limit_price=str(rounded_tp_price),
+                stop_trigger_price=str(rounded_sl_price)
             )
 
             # Check response
@@ -2499,9 +2592,9 @@ class TradingTerminal:
                 client_order_id=client_order_id,
                 product_id=product_id,
                 side=side,
-                base_size=base_size,
-                limit_price=tp_price_str,
-                stop_trigger_price=sl_price_str,
+                base_size=str(rounded_size),
+                limit_price=str(rounded_tp_price),
+                stop_trigger_price=str(rounded_sl_price),
                 status="ACTIVE",
                 created_at=datetime.utcnow().isoformat() + "Z"
             )
@@ -2518,8 +2611,8 @@ class TradingTerminal:
             print_success(f"\nBracket order placed successfully!")
             print(f"Order ID: {order_id}")
             print(f"Status: Active")
-            print(f"Take-Profit trigger: {format_currency(tp_price)}")
-            print(f"Stop-Loss trigger: {format_currency(sl_price)}")
+            print(f"Take-Profit trigger: {format_currency(rounded_tp_price)}")
+            print(f"Stop-Loss trigger: {format_currency(rounded_sl_price)}")
 
             logging.info(f"Bracket order placed: {order_id}")
 
@@ -2565,8 +2658,7 @@ class TradingTerminal:
                 return None
 
             current_price = current_prices['mid']
-            print(f"\nCurrent market price: {format_currency(current_price)}")
-            print(f"Entry limit price: {format_currency(entry_price)}")
+            print(f"\nEntry limit price: {format_currency(entry_price)}")
 
             # Get take-profit price
             tp_price_str = self.get_input("\nEnter take-profit price (will activate after entry fills)")
@@ -2628,18 +2720,24 @@ class TradingTerminal:
                 print_info("Order cancelled.")
                 return None
 
-            # Build order configuration
+            # Round prices to proper precision for the product
+            rounded_entry_price = self.round_price(entry_price, product_id)
+            rounded_tp_price = self.round_price(tp_price, product_id)
+            rounded_sl_price = self.round_price(sl_price, product_id)
+            rounded_size = self.round_size(float(base_size), product_id)
+
+            # Build order configuration - all prices MUST be strings
             order_configuration = {
                 "limit_limit_gtc": {
-                    "baseSize": base_size,
-                    "limitPrice": order_input["limit_price"]
+                    "baseSize": str(rounded_size),
+                    "limitPrice": str(rounded_entry_price)
                 }
             }
 
             attached_order_configuration = {
                 "trigger_bracket_gtc": {
-                    "limit_price": tp_price_str,
-                    "stop_trigger_price": sl_price_str
+                    "limit_price": str(rounded_tp_price),
+                    "stop_trigger_price": str(rounded_sl_price)
                 }
             }
 
@@ -2681,10 +2779,10 @@ class TradingTerminal:
                 client_order_id=client_order_id,
                 product_id=product_id,
                 side=side,
-                base_size=base_size,
-                entry_limit_price=order_input["limit_price"],
-                take_profit_price=tp_price_str,
-                stop_loss_price=sl_price_str,
+                base_size=str(rounded_size),
+                entry_limit_price=str(rounded_entry_price),
+                take_profit_price=str(rounded_tp_price),
+                stop_loss_price=str(rounded_sl_price),
                 status="PENDING",
                 created_at=datetime.utcnow().isoformat() + "Z"
             )
@@ -2700,10 +2798,10 @@ class TradingTerminal:
             # Display success
             print_success(f"\nEntry + Bracket order placed successfully!")
             print(f"Entry Order ID: {order_id}")
-            print(f"Status: Pending entry fill at {format_currency(entry_price)}")
+            print(f"Status: Pending entry fill at {format_currency(rounded_entry_price)}")
             print(f"Once filled, TP/SL will activate:")
-            print(f"  - Take-Profit: {format_currency(tp_price)}")
-            print(f"  - Stop-Loss: {format_currency(sl_price)}")
+            print(f"  - Take-Profit: {format_currency(rounded_tp_price)}")
+            print(f"  - Stop-Loss: {format_currency(rounded_sl_price)}")
 
             logging.info(f"Entry+Bracket order placed: {order_id}")
 
@@ -2965,25 +3063,86 @@ class TradingTerminal:
             logging.error(f"Error in cancel_conditional_orders: {str(e)}", exc_info=True)
             print_error(f"Error: {str(e)}")
 
+    def _sync_conditional_order_statuses(self):
+        """
+        Sync tracked conditional orders with actual Coinbase order statuses.
+        Updates or removes orders that have been cancelled or completed.
+        """
+        try:
+            # Get all current orders from Coinbase (including all types)
+            self.rate_limiter.wait()
+            all_api_orders = self.client.list_orders()
+
+            # Create a map of all Coinbase orders (not just active ones)
+            api_order_statuses = {}
+            if hasattr(all_api_orders, 'orders'):
+                for order in all_api_orders.orders:
+                    api_order_statuses[order.order_id] = order.status
+
+            # Sync stop-limit orders
+            stop_limit_orders = self.conditional_order_tracker.list_stop_limit_orders()
+            for order in stop_limit_orders:
+                # If order is already marked as completed, skip
+                if order.is_completed():
+                    continue
+
+                # Check if order exists in Coinbase API
+                if order.order_id in api_order_statuses:
+                    api_status = api_order_statuses[order.order_id]
+                    # Update if status has changed to a terminal state
+                    if api_status in ['CANCELLED', 'EXPIRED', 'FAILED', 'FILLED']:
+                        logging.info(f"Syncing conditional order {order.order_id}: status changed to {api_status}")
+                        self.conditional_order_tracker.update_order_status(
+                            order_id=order.order_id,
+                            order_type="stop_limit",
+                            status=api_status,
+                            fill_info=None
+                        )
+                else:
+                    # Order not found in API at all - likely cancelled
+                    logging.info(f"Syncing conditional order {order.order_id}: not found in API, marking as CANCELLED")
+                    self.conditional_order_tracker.update_order_status(
+                        order_id=order.order_id,
+                        order_type="stop_limit",
+                        status="CANCELLED",
+                        fill_info=None
+                    )
+
+        except Exception as e:
+            logging.error(f"Error syncing conditional order statuses: {str(e)}", exc_info=True)
+
     def view_all_active_orders(self):
         """
-        Unified view of all active orders (regular + conditional).
-        Displays orders grouped by type with color-coded status.
+        Unified view and cancel interface for all active orders.
+        Displays orders grouped by type with color-coded status, then offers cancellation.
         """
         if not self.client:
             print_warning("Please login first.")
             return
 
         try:
-            print_header("All Active Orders")
+            print_header("Active Orders & Management")
 
             # Get regular orders
             print_info("\nFetching regular orders...")
-            regular_orders = self.get_active_orders()
+            all_api_orders = self.get_active_orders()
 
-            # Get conditional orders
+            # Filter out stop-limit orders (they'll be shown in conditional section)
+            regular_orders = []
+            for order in all_api_orders:
+                order_config = order.order_configuration
+                config_type = next(iter(vars(order_config)))
+                # Exclude stop-limit orders
+                if not config_type.startswith('stop_limit_stop_limit'):
+                    regular_orders.append(order)
+
+            # Get conditional orders and sync their statuses
             print_info("Fetching conditional orders...")
+            self._sync_conditional_order_statuses()
             conditional_orders = self.conditional_order_tracker.list_all_active_orders()
+
+            # Build numbered list for potential cancellation
+            numbered_orders = []
 
             # Display regular orders
             if regular_orders:
@@ -2997,7 +3156,17 @@ class TradingTerminal:
                     size = getattr(config, 'base_size', 'N/A')
                     price = getattr(config, 'limit_price', 'N/A')
 
+                    # Add to numbered list
+                    numbered_orders.append({
+                        'type': 'regular',
+                        'order': order,
+                        'display': f"{order.product_id} {order.side} {size} @ {price}",
+                        'order_id': order.order_id,
+                        'status': order.status
+                    })
+
                     table_data.append([
+                        f"#{len(numbered_orders)}",
                         order.order_id[:12] + "...",
                         order.product_id,
                         format_side(order.side),
@@ -3006,7 +3175,7 @@ class TradingTerminal:
                         format_status(order.status)
                     ])
 
-                print(tabulate(table_data, headers=["Order ID", "Product", "Side", "Size", "Price", "Status"], tablefmt="grid"))
+                print(tabulate(table_data, headers=["#", "Order ID", "Product", "Side", "Size", "Price", "Status"], tablefmt="grid"))
             else:
                 print_info("No active regular orders.")
 
@@ -3024,6 +3193,16 @@ class TradingTerminal:
                     print_info("\nStop-Loss / Take-Profit Orders:")
                     table_data = []
                     for order in stop_limit_orders:
+                        # Add to numbered list
+                        numbered_orders.append({
+                            'type': 'conditional',
+                            'order': order,
+                            'display': f"{order.order_type} - {order.product_id} {order.side} {order.base_size} (Stop: {order.stop_price})",
+                            'order_id': order.order_id,
+                            'conditional_type': 'stop_limit',
+                            'status': order.status
+                        })
+
                         # Color code status
                         if order.status == "PENDING":
                             status_display = warning(order.status)
@@ -3035,6 +3214,7 @@ class TradingTerminal:
                             status_display = error(order.status)
 
                         table_data.append([
+                            f"#{len(numbered_orders)}",
                             order.order_id[:12] + "...",
                             order.order_type,
                             order.product_id,
@@ -3044,13 +3224,23 @@ class TradingTerminal:
                             order.limit_price,
                             status_display
                         ])
-                    print(tabulate(table_data, headers=["Order ID", "Type", "Product", "Side", "Size", "Stop Price", "Limit Price", "Status"], tablefmt="grid"))
+                    print(tabulate(table_data, headers=["#", "Order ID", "Type", "Product", "Side", "Size", "Stop Price", "Limit Price", "Status"], tablefmt="grid"))
 
                 # Display bracket orders
                 if bracket_orders:
                     print_info("\nBracket Orders (TP/SL on Position):")
                     table_data = []
                     for order in bracket_orders:
+                        # Add to numbered list
+                        numbered_orders.append({
+                            'type': 'conditional',
+                            'order': order,
+                            'display': f"Bracket - {order.product_id} {order.side} {order.base_size} (TP: {order.limit_price}, SL: {order.stop_trigger_price})",
+                            'order_id': order.order_id,
+                            'conditional_type': 'bracket',
+                            'status': order.status
+                        })
+
                         if order.status == "PENDING":
                             status_display = warning(order.status)
                         elif order.status == "ACTIVE":
@@ -3061,6 +3251,7 @@ class TradingTerminal:
                             status_display = error(order.status)
 
                         table_data.append([
+                            f"#{len(numbered_orders)}",
                             order.order_id[:12] + "...",
                             order.product_id,
                             format_side(order.side),
@@ -3069,13 +3260,23 @@ class TradingTerminal:
                             order.stop_trigger_price,
                             status_display
                         ])
-                    print(tabulate(table_data, headers=["Order ID", "Product", "Side", "Size", "TP Price", "SL Price", "Status"], tablefmt="grid"))
+                    print(tabulate(table_data, headers=["#", "Order ID", "Product", "Side", "Size", "TP Price", "SL Price", "Status"], tablefmt="grid"))
 
                 # Display attached bracket orders
                 if attached_bracket_orders:
                     print_info("\nEntry + Bracket Orders (Entry with TP/SL):")
                     table_data = []
                     for order in attached_bracket_orders:
+                        # Add to numbered list
+                        numbered_orders.append({
+                            'type': 'conditional',
+                            'order': order,
+                            'display': f"Entry+Bracket - {order.product_id} {order.side} {order.base_size} (Entry: {order.entry_limit_price})",
+                            'order_id': order.entry_order_id,
+                            'conditional_type': 'attached_bracket',
+                            'status': order.status
+                        })
+
                         if order.status == "PENDING":
                             status_display = warning(order.status)
                         elif order.status == "ENTRY_FILLED":
@@ -3086,6 +3287,7 @@ class TradingTerminal:
                             status_display = error(order.status)
 
                         table_data.append([
+                            f"#{len(numbered_orders)}",
                             order.entry_order_id[:12] + "...",
                             order.product_id,
                             format_side(order.side),
@@ -3095,18 +3297,102 @@ class TradingTerminal:
                             order.stop_loss_price,
                             status_display
                         ])
-                    print(tabulate(table_data, headers=["Order ID", "Product", "Side", "Size", "Entry", "TP", "SL", "Status"], tablefmt="grid"))
+                    print(tabulate(table_data, headers=["#", "Order ID", "Product", "Side", "Size", "Entry", "TP", "SL", "Status"], tablefmt="grid"))
 
             else:
                 print_info("No active conditional orders.")
 
             # Display summary
-            total_orders = len(regular_orders) + len(conditional_orders)
+            total_orders = len(numbered_orders)
             print("\n" + "="*50)
             print_info(f"Total active orders: {total_orders}")
             print_info(f"  Regular: {len(regular_orders)}")
             print_info(f"  Conditional: {len(conditional_orders)}")
             print("="*50)
+
+            # Offer to cancel orders
+            if total_orders > 0:
+                print()
+                cancel_choice = self.get_input("Would you like to cancel any orders? (yes/no)", allow_cancel=False).lower()
+
+                if cancel_choice in ['yes', 'y']:
+                    selection = self.get_input("Enter order numbers to cancel (comma-separated, or 'all')", allow_cancel=False)
+
+                    if selection.lower() == 'all':
+                        orders_to_cancel = numbered_orders
+                    else:
+                        try:
+                            indices = [int(x.strip()) - 1 for x in selection.split(',')]
+                            orders_to_cancel = [numbered_orders[i] for i in indices if 0 <= i < len(numbered_orders)]
+                        except (ValueError, IndexError):
+                            print_error("Invalid selection.")
+                            return
+
+                    if not orders_to_cancel:
+                        print_info("No orders selected.")
+                        return
+
+                    # Confirm cancellation
+                    print_warning(f"\nYou are about to cancel {len(orders_to_cancel)} order(s):")
+                    for order_info in orders_to_cancel:
+                        print(f"  - {order_info['display']}")
+
+                    confirm = self.get_input("\nConfirm cancellation? (yes/no)", allow_cancel=False)
+                    if confirm.lower() not in ['yes', 'y']:
+                        print_info("Cancellation aborted.")
+                        return
+
+                    # Cancel each order
+                    cancelled_count = 0
+                    failed_count = 0
+
+                    for order_info in orders_to_cancel:
+                        try:
+                            order_id = order_info['order_id']
+
+                            # Cancel via API
+                            self.rate_limiter.wait()
+                            response = self.client.cancel_orders([order_id])
+
+                            # Check response
+                            success = False
+                            if hasattr(response, 'results') and response.results:
+                                result = response.results[0]
+                                success = getattr(result, 'success', False)
+
+                            if success:
+                                # Update conditional order tracker if needed
+                                if order_info['type'] == 'conditional':
+                                    self.conditional_order_tracker.update_order_status(
+                                        order_id=order_id,
+                                        order_type=order_info['conditional_type'],
+                                        status="CANCELLED",
+                                        fill_info=None
+                                    )
+
+                                    # Remove from monitoring
+                                    with self.conditional_lock:
+                                        if order_id in self.order_to_conditional_map:
+                                            del self.order_to_conditional_map[order_id]
+
+                                print_success(f"✓ Cancelled: {order_id[:12]}...")
+                                cancelled_count += 1
+                            else:
+                                error_msg = getattr(result, 'failure_reason', 'Unknown error') if hasattr(response, 'results') else "Unknown error"
+                                print_error(f"✗ Failed to cancel {order_id[:12]}...: {error_msg}")
+                                failed_count += 1
+
+                        except Exception as e:
+                            logging.error(f"Error cancelling order {order_id}: {str(e)}")
+                            print_error(f"✗ Error cancelling {order_id[:12]}...: {str(e)}")
+                            failed_count += 1
+
+                    # Display summary
+                    print("\n" + "="*50)
+                    print_success(f"Successfully cancelled: {cancelled_count}")
+                    if failed_count > 0:
+                        print_error(f"Failed to cancel: {failed_count}")
+                    print("="*50)
 
         except CancelledException:
             print_info("\nCancelled. Returning to main menu.")
@@ -3126,8 +3412,19 @@ class TradingTerminal:
         try:
             print_header("Cancel Orders")
 
-            # Get all active orders
-            regular_orders = self.get_active_orders()
+            # Get all active orders and filter out stop-limit orders
+            all_api_orders = self.get_active_orders()
+
+            # Filter out stop-limit orders (they're handled as conditional orders)
+            regular_orders = []
+            for order in all_api_orders:
+                order_config = order.order_configuration
+                config_type = next(iter(vars(order_config)))
+                if not config_type.startswith('stop_limit_stop_limit'):
+                    regular_orders.append(order)
+
+            # Sync and get conditional orders
+            self._sync_conditional_order_statuses()
             conditional_orders = self.conditional_order_tracker.list_all_active_orders()
 
             if not regular_orders and not conditional_orders:
@@ -3411,13 +3708,10 @@ class TradingTerminal:
                     break
                 print("Invalid side. Please enter 'buy' or 'sell'.")
 
-            # Get current prices
+            # Display market conditions (helps user decide on size and price)
             current_prices = self.get_current_prices(product_id)
             if current_prices:
-                print(f"\nCurrent market prices for {product_id}:")
-                print(f"Bid: ${current_prices['bid']:.2f}")
-                print(f"Ask: ${current_prices['ask']:.2f}")
-                print(f"Mid: ${current_prices['mid']:.2f}")
+                self._display_market_conditions(product_id, side, current_prices)
 
             # Get limit price
             while True:
@@ -3747,31 +4041,26 @@ class TradingTerminal:
                 # Portfolio & History
                 print(info("\n=== Portfolio & History ==="))
                 print("1. View portfolio balances")
-                print("2. View order history")
+                print("2. View & manage orders")
+                print("3. View order history")
 
                 # Basic Orders
                 print(info("\n=== Basic Orders ==="))
-                print("3. Limit order")
-                print("4. Stop-loss order (standalone)")
-                print("5. Take-profit order (standalone)")
+                print("4. Limit order")
+                print("5. Stop-loss order (standalone)")
+                print("6. Take-profit order (standalone)")
 
                 # Advanced Orders
                 print(info("\n=== Advanced Orders ==="))
-                print("6. Entry + Bracket (new position with TP/SL)")
-                print("7. Bracket Existing Position (add TP/SL protection)")
+                print("7. Entry + Bracket (new position with TP/SL)")
 
                 # Algorithmic Trading
                 print(info("\n=== Algorithmic Trading ==="))
                 print("8. TWAP order")
                 print("9. View TWAP fills")
 
-                # Order Management
-                print(info("\n=== Order Management ==="))
-                print("10. View active orders")
-                print("11. Cancel orders")
-
                 try:
-                    choice = self.get_input("\nEnter your choice (1-11)")
+                    choice = self.get_input("\nEnter your choice (1-9)")
                 except CancelledException:
                     print_info("\nExiting application.")
                     break
@@ -3779,28 +4068,27 @@ class TradingTerminal:
                 if choice == '1':
                     self.view_portfolio()
                 elif choice == '2':
-                    self.view_order_history()
+                    # View and manage all active orders (with optional cancellation)
+                    self.view_all_active_orders()
                 elif choice == '3':
+                    self.view_order_history()
+                elif choice == '4':
                     logging.debug("Starting limit order placement from run()")
                     result = self.place_limit_order()
                     logging.debug(f"Limit order placement completed with result: {result}")
                     logging.debug("Returning to main menu")
-                elif choice == '4':
+                elif choice == '5':
                     order_id = self.place_stop_loss_order()
                     if order_id:
                         print_success(f"Stop-loss order placed: {order_id}")
-                elif choice == '5':
+                elif choice == '6':
                     order_id = self.place_take_profit_order()
                     if order_id:
                         print_success(f"Take-profit order placed: {order_id}")
-                elif choice == '6':
+                elif choice == '7':
                     order_id = self.place_entry_with_bracket()
                     if order_id:
                         print_success(f"Entry+Bracket order placed: {order_id}")
-                elif choice == '7':
-                    order_id = self.place_bracket_for_position()
-                    if order_id:
-                        print_success(f"Bracket order placed: {order_id}")
                 elif choice == '8':
                     twap_id = self.place_twap_order()
                     if twap_id:
@@ -3821,12 +4109,6 @@ class TradingTerminal:
                                 print_warning("Please enter a valid number.")
                     except CancelledException:
                         print_info("\nCancelled. Returning to main menu.")
-                elif choice == '10':
-                    # Combined view: show all active orders (regular + conditional)
-                    self.view_all_active_orders()
-                elif choice == '11':
-                    # Combined cancel: cancel any active orders
-                    self.cancel_any_orders()
                 else:
                     print_warning("Invalid choice. Please try again.")
         except Exception as e:
