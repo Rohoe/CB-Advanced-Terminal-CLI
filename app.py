@@ -29,6 +29,7 @@ from order_executor import OrderExecutor, CancelledException
 from twap_executor import TWAPExecutor
 from conditional_executor import ConditionalExecutor
 from display_service import DisplayService
+from scaled_executor import ScaledExecutor
 
 
 # Configure logging with both file and console output
@@ -158,6 +159,11 @@ class TradingTerminal:
             self.order_to_conditional_map = {}
             self.conditional_lock = Lock()
 
+            # Scaled orders tracking
+            logging.debug("Initializing scaled order tracking")
+            self.order_to_scaled_map = {}
+            self.scaled_lock = Lock()
+
             # Caches with TTLs from config
             logging.debug("Initializing caches")
             self.order_status_cache = {}
@@ -234,6 +240,14 @@ class TradingTerminal:
             market_data=self.market_data,
             order_executor=self.order_executor,
             conditional_tracker=self.conditional_order_tracker,
+            order_queue=self.order_queue,
+            config=self.config
+        )
+
+        # ScaledExecutor
+        self.scaled_executor = ScaledExecutor(
+            order_executor=self.order_executor,
+            market_data=self.market_data,
             order_queue=self.order_queue,
             config=self.config
         )
@@ -585,6 +599,50 @@ class TradingTerminal:
         except Exception as e:
             logging.error(f"Error checking TWAP fills: {str(e)}")
             print("Error checking TWAP fills. Please check the logs for details.")
+
+    # ========================
+    # Scaled Order Delegation
+    # ========================
+
+    def place_scaled_order(self):
+        """Place a scaled/ladder order."""
+        if not self.client:
+            print_warning("Please login first.")
+            return None
+        try:
+            scaled_id = self.scaled_executor.place_scaled_order(self.get_input)
+            if scaled_id:
+                # Register child orders for background monitoring
+                order = self.scaled_executor.scaled_tracker.get_scaled_order(scaled_id)
+                if order:
+                    with self.scaled_lock:
+                        for level in order.levels:
+                            if level.order_id:
+                                self.order_to_scaled_map[level.order_id] = (scaled_id, level.level_number)
+            return scaled_id
+        except CancelledException:
+            print_info("\nCancelled. Returning to main menu.")
+            return None
+
+    def view_scaled_order_fills(self):
+        """View scaled order fills."""
+        if not self.client:
+            print_warning("Please login first.")
+            return
+        try:
+            scaled_ids = self.scaled_executor.display_all_scaled_orders()
+            if scaled_ids:
+                num = self.get_input("Enter the number of the scaled order to view")
+                try:
+                    idx = int(num) - 1
+                    if 0 <= idx < len(scaled_ids):
+                        self.scaled_executor.display_scaled_summary(scaled_ids[idx])
+                    else:
+                        print_warning("Invalid scaled order number.")
+                except ValueError:
+                    print_warning("Please enter a valid number.")
+        except CancelledException:
+            print_info("\nCancelled. Returning to main menu.")
 
     # ========================
     # Conditional Order Delegation
@@ -980,9 +1038,11 @@ class TradingTerminal:
                 print(info("\n=== Algorithmic Trading ==="))
                 print("8. TWAP order")
                 print("9. View TWAP fills")
+                print("10. Scaled/Ladder order")
+                print("11. View Scaled order fills")
 
                 try:
-                    choice = self.get_input("\nEnter your choice (1-9)")
+                    choice = self.get_input("\nEnter your choice (1-11)")
                 except CancelledException:
                     print_info("\nExiting application.")
                     break
@@ -1027,6 +1087,12 @@ class TradingTerminal:
                                 print_warning("Please enter a valid number.")
                     except CancelledException:
                         print_info("\nCancelled. Returning to main menu.")
+                elif choice == '10':
+                    scaled_id = self.place_scaled_order()
+                    if scaled_id:
+                        print_success(f"Scaled order placed with ID: {highlight(scaled_id[:8])}...")
+                elif choice == '11':
+                    self.view_scaled_order_fills()
                 else:
                     print_warning("Invalid choice. Please try again.")
         except Exception as e:

@@ -414,3 +414,95 @@ class InputValidator:
             )
 
         return price_type
+
+    @staticmethod
+    def validate_price_range(price_low: float, price_high: float) -> tuple:
+        """
+        Validate a price range for scaled orders.
+
+        Args:
+            price_low: Lower bound of the price range.
+            price_high: Upper bound of the price range.
+
+        Returns:
+            Tuple of (price_low, price_high) as floats.
+
+        Raises:
+            ValidationError: If range is invalid.
+        """
+        price_low = InputValidator.validate_price(price_low)
+        price_high = InputValidator.validate_price(price_high)
+
+        if price_low >= price_high:
+            raise ValidationError(
+                f"Low price ({price_low}) must be less than high price ({price_high})",
+                field="price_range",
+                value=(price_low, price_high)
+            )
+
+        return (price_low, price_high)
+
+    @staticmethod
+    def validate_num_orders(
+        num_orders: int,
+        total_size: float,
+        min_size: float,
+        max_orders: int = 100
+    ) -> int:
+        """
+        Validate the number of orders for a scaled order.
+
+        Ensures that:
+        1. num_orders is at least 1
+        2. num_orders doesn't exceed max_orders
+        3. The minimum per-order size is at least min_size
+
+        Args:
+            num_orders: Number of orders to place.
+            total_size: Total order size to split.
+            min_size: Minimum order size for the product.
+            max_orders: Maximum number of orders (default: 100).
+
+        Returns:
+            The validated num_orders as an integer.
+
+        Raises:
+            ValidationError: If num_orders would result in invalid order sizes.
+        """
+        try:
+            num_orders = int(num_orders)
+        except (TypeError, ValueError):
+            raise ValidationError(
+                f"Number of orders must be a valid integer, got: {type(num_orders).__name__}",
+                field="num_orders",
+                value=num_orders
+            )
+
+        if num_orders < 1:
+            raise ValidationError(
+                "Number of orders must be at least 1",
+                field="num_orders",
+                value=num_orders
+            )
+
+        if num_orders > max_orders:
+            raise ValidationError(
+                f"Number of orders cannot exceed {max_orders}",
+                field="num_orders",
+                value=num_orders
+            )
+
+        # For linear distribution, each order gets total_size/num_orders
+        # For other distributions, minimum per-order could be even smaller
+        # Validate conservatively using linear (worst case for min size)
+        min_per_order = total_size / num_orders
+        if min_per_order < min_size:
+            max_valid = int(total_size / min_size)
+            raise ValidationError(
+                f"Order size ({min_per_order:.8f}) would be below minimum ({min_size}). "
+                f"Reduce number of orders to at most {max_valid}",
+                field="num_orders",
+                value=num_orders
+            )
+
+        return num_orders
