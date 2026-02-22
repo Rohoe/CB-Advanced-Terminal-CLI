@@ -15,6 +15,7 @@ class OrderViewService:
         self.api_client = api_client
         self.market_data = market_data
         self.conditional_tracker = conditional_tracker
+        self.rate_limiter = market_data.rate_limiter
 
     def get_active_orders(self):
         """Get list of active orders."""
@@ -40,7 +41,7 @@ class OrderViewService:
         try:
             logging.info(f"Fetching order history (limit={limit}, product={product_id}, status={order_status})")
 
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
 
             orders_response = self.api_client.list_orders()
 
@@ -67,10 +68,10 @@ class OrderViewService:
             logging.error(f"Error fetching order history: {str(e)}", exc_info=True)
             return []
 
-    def sync_conditional_order_statuses(self, rate_limiter):
+    def sync_conditional_order_statuses(self):
         """Sync tracked conditional orders with actual Coinbase order statuses."""
         try:
-            rate_limiter.wait()
+            self.rate_limiter.wait()
             all_api_orders = self.api_client.list_orders()
 
             api_order_statuses = {}

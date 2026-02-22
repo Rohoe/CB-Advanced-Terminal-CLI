@@ -778,7 +778,6 @@ class TradingTerminal:
         try:
             self.display_service.view_all_active_orders(
                 get_input_fn=self.get_input,
-                rate_limiter=self.rate_limiter,
                 conditional_lock=self.conditional_lock,
                 order_to_conditional_map=self.order_to_conditional_map
             )
@@ -787,7 +786,7 @@ class TradingTerminal:
 
     def _sync_conditional_order_statuses(self):
         """Sync tracked conditional orders with actual Coinbase order statuses."""
-        self.display_service._sync_conditional_order_statuses(self.rate_limiter)
+        self.display_service._sync_conditional_order_statuses()
 
     # ========================
     # TWAP Status (in-memory tracking)

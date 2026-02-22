@@ -33,6 +33,7 @@ class ConditionalExecutor:
         self.conditional_tracker = conditional_tracker
         self.order_queue = order_queue
         self.config = config
+        self.rate_limiter = market_data.rate_limiter
         self.order_to_conditional_map = {}
         self.conditional_lock = Lock()
         self._input_helper = InteractiveInputHelper(market_data)
@@ -124,7 +125,7 @@ class ConditionalExecutor:
             rounded_size = self.market_data.round_size(float(base_size), product_id)
 
             client_order_id = f"sl-{str(uuid.uuid4())[:8]}"
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
 
             if side == "SELL":
                 response = self.api_client.stop_limit_order_gtc_sell(
@@ -211,7 +212,7 @@ class ConditionalExecutor:
             rounded_size = self.market_data.round_size(float(base_size), product_id)
 
             client_order_id = f"tp-{str(uuid.uuid4())[:8]}"
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
 
             if side == "SELL":
                 response = self.api_client.stop_limit_order_gtc_sell(
@@ -299,7 +300,7 @@ class ConditionalExecutor:
             rounded_size = self.market_data.round_size(float(base_size), product_id)
 
             client_order_id = f"bracket-{str(uuid.uuid4())[:8]}"
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
 
             response = self.api_client.trigger_bracket_order_gtc(
                 client_order_id=client_order_id, product_id=product_id,
@@ -386,7 +387,7 @@ class ConditionalExecutor:
             }
 
             client_order_id = f"entry-bracket-{str(uuid.uuid4())[:8]}"
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
 
             response = self.api_client.create_order(
                 client_order_id=client_order_id, product_id=product_id,
@@ -516,7 +517,7 @@ class ConditionalExecutor:
                 order_type = "attached_bracket" if hasattr(order, 'entry_order_id') else \
                              "stop_limit" if hasattr(order, 'order_type') else "bracket"
                 try:
-                    self.market_data.rate_limiter.wait()
+                    self.rate_limiter.wait()
                     response = self.api_client.cancel_orders([order_id])
                     if hasattr(response, 'results') and response.results:
                         self.conditional_tracker.update_order_status(
@@ -538,7 +539,7 @@ class ConditionalExecutor:
     def sync_conditional_order_statuses(self):
         """Sync tracked conditional orders with actual API statuses."""
         try:
-            self.market_data.rate_limiter.wait()
+            self.rate_limiter.wait()
             all_api_orders = self.api_client.list_orders()
             api_statuses = {}
             if hasattr(all_api_orders, 'orders'):

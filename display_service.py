@@ -39,6 +39,7 @@ class DisplayService:
         self.twap_storage = twap_storage
         self.conditional_tracker = conditional_tracker
         self.config = config
+        self.rate_limiter = market_data.rate_limiter
         self.order_view = OrderViewService(api_client, market_data, conditional_tracker)
 
         # Get the underlying tracker for direct access
@@ -423,7 +424,7 @@ class DisplayService:
             logging.error(f"Error viewing order history: {str(e)}", exc_info=True)
             print_error(f"Error viewing order history: {str(e)}")
 
-    def view_all_active_orders(self, get_input_fn, rate_limiter, conditional_lock,
+    def view_all_active_orders(self, get_input_fn, conditional_lock,
                                 order_to_conditional_map):
         """
         Unified view and cancel interface for all active orders.
@@ -446,7 +447,7 @@ class DisplayService:
 
             # Get conditional orders and sync their statuses
             print_info("Fetching conditional orders...")
-            self._sync_conditional_order_statuses(rate_limiter)
+            self._sync_conditional_order_statuses()
             conditional_orders = self.conditional_tracker.list_all_active_orders()
 
             # Build numbered list for potential cancellation
@@ -647,7 +648,7 @@ class DisplayService:
                         try:
                             order_id = order_info['order_id']
 
-                            rate_limiter.wait()
+                            self.rate_limiter.wait()
                             response = self.api_client.cancel_orders([order_id])
 
                             cancel_success = False
@@ -689,6 +690,6 @@ class DisplayService:
             logging.error(f"Error in view_all_active_orders: {str(e)}", exc_info=True)
             print_error(f"Error: {str(e)}")
 
-    def _sync_conditional_order_statuses(self, rate_limiter):
+    def _sync_conditional_order_statuses(self):
         """Sync tracked conditional orders with actual Coinbase order statuses."""
-        self.order_view.sync_conditional_order_statuses(rate_limiter)
+        self.order_view.sync_conditional_order_statuses()

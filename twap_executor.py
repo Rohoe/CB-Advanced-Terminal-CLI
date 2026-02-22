@@ -36,6 +36,7 @@ class TWAPExecutor:
         self.twap_storage = twap_storage
         self.order_queue = order_queue
         self.config = config
+        self.rate_limiter = market_data.rate_limiter
 
         # Get the underlying tracker for direct access
         if hasattr(twap_storage, '_tracker'):
@@ -460,7 +461,7 @@ class TWAPExecutor:
 
             for order_id in twap_order.orders:
                 try:
-                    self.order_executor.rate_limiter.wait()
+                    self.rate_limiter.wait()
                     order_fills = self.order_executor.api_client.get_fills(order_ids=[order_id])
                     if not hasattr(order_fills, 'fills'):
                         continue
