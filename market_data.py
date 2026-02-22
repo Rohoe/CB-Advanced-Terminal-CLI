@@ -11,6 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from tabulate import tabulate
+from precision_service import PrecisionService
 from ui_helpers import print_warning, format_currency
 
 
@@ -30,8 +31,9 @@ class MarketDataService:
         self.account_cache_time = 0
         self.account_cache_ttl = config.cache.account_ttl
 
-        # Precision config
+        # Precision service
         self.precision_config = config.precision.product_overrides
+        self._precision = PrecisionService(api_client, self.precision_config)
 
     def get_accounts(self, force_refresh=False):
         """Get account information with caching."""
@@ -350,34 +352,8 @@ class MarketDataService:
 
     def round_size(self, size, product_id):
         """Round order size to appropriate precision for the product."""
-        try:
-            product_info = self.api_client.get_product(product_id)
-            base_increment = float(product_info['base_increment'])
-            if base_increment >= 1:
-                precision = 0
-            else:
-                precision = abs(int(math.log10(base_increment)))
-            return round(float(size), precision)
-        except Exception as e:
-            logging.error(f"Error rounding size: {str(e)}")
-            if product_id in self.precision_config:
-                precision = self.precision_config[product_id]['size']
-                return round(float(size), precision)
-            return float(size)
+        return self._precision.round_size(size, product_id)
 
     def round_price(self, price, product_id):
         """Round price to appropriate precision for the product."""
-        try:
-            product_info = self.api_client.get_product(product_id)
-            quote_increment = float(product_info['quote_increment'])
-            if quote_increment >= 1:
-                precision = 0
-            else:
-                precision = abs(int(math.log10(quote_increment)))
-            return round(float(price), precision)
-        except Exception as e:
-            logging.error(f"Error rounding price: {str(e)}")
-            if product_id in self.precision_config:
-                precision = self.precision_config[product_id]['price']
-                return round(float(price), precision)
-            return float(price)
+        return self._precision.round_price(price, product_id)
