@@ -302,6 +302,90 @@ def test_app_config():
 
 
 # =============================================================================
+# Executor Factory Fixtures
+# =============================================================================
+
+@pytest.fixture
+def make_order_executor():
+    """Factory fixture for creating an OrderExecutor with mocked dependencies.
+
+    Returns a callable: (api_client=None, config=None) -> (executor, api, market_data)
+    """
+    from order_executor import OrderExecutor
+    from market_data import MarketDataService
+    from tests.mocks.mock_coinbase_api import MockCoinbaseAPI
+
+    def _factory(api_client=None, config=None):
+        api = api_client or MockCoinbaseAPI()
+        cfg = config or AppConfig.for_testing()
+        rl = Mock(wait=Mock(return_value=None))
+        md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
+        return OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg), api, md
+
+    return _factory
+
+
+@pytest.fixture
+def make_twap_executor():
+    """Factory fixture for creating a TWAPExecutor with mocked dependencies.
+
+    Returns a callable: (api_client=None, config=None) -> (twap_exec, api, storage, order_queue)
+    """
+    from queue import Queue
+    from twap_executor import TWAPExecutor
+    from order_executor import OrderExecutor
+    from market_data import MarketDataService
+    from tests.mocks.mock_coinbase_api import MockCoinbaseAPI
+
+    def _factory(api_client=None, config=None):
+        api = api_client or MockCoinbaseAPI()
+        cfg = config or AppConfig.for_testing()
+        rl = Mock(wait=Mock(return_value=None))
+        md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
+        oe = OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg)
+        storage = InMemoryTWAPStorage()
+        order_queue = Queue()
+        twap_exec = TWAPExecutor(
+            order_executor=oe, market_data=md, twap_storage=storage,
+            order_queue=order_queue, config=cfg
+        )
+        return twap_exec, api, storage, order_queue
+
+    return _factory
+
+
+@pytest.fixture
+def make_conditional_executor():
+    """Factory fixture for creating a ConditionalExecutor with mocked dependencies.
+
+    Returns a callable: (api_client=None, config=None) -> (cond_exec, api, market_data)
+    """
+    import tempfile
+    from queue import Queue
+    from order_executor import OrderExecutor
+    from conditional_executor import ConditionalExecutor
+    from conditional_order_tracker import ConditionalOrderTracker
+    from market_data import MarketDataService
+    from tests.mocks.mock_coinbase_api import MockCoinbaseAPI
+
+    def _factory(api_client=None, config=None):
+        api = api_client or MockCoinbaseAPI()
+        cfg = config or AppConfig.for_testing()
+        rl = Mock(wait=Mock(return_value=None))
+        md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
+        oe = OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg)
+        tracker = ConditionalOrderTracker(base_dir=tempfile.mkdtemp())
+        order_queue = Queue()
+        cond_exec = ConditionalExecutor(
+            api_client=api, market_data=md, order_executor=oe,
+            conditional_tracker=tracker, order_queue=order_queue, config=cfg
+        )
+        return cond_exec, api, md
+
+    return _factory
+
+
+# =============================================================================
 # Helper Fixtures
 # =============================================================================
 

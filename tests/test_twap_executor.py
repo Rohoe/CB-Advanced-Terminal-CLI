@@ -22,7 +22,7 @@ from tests.mocks.mock_coinbase_api import MockCoinbaseAPI
 
 
 # =============================================================================
-# Helpers
+# Helpers (see also conftest.make_twap_executor for fixture-based alternative)
 # =============================================================================
 
 def _make_twap_executor(api_client=None, config=None):
