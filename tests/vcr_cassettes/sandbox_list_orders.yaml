@@ -1,0 +1,97 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: GET
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/orders/historical/batch
+  response:
+    body:
+      string: '{"orders":[{"order_id":"aa934bbb-1261-4d9f-8556-f7273aa0f5b3","product_id":"BTC-USD","user_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","order_configuration":{"limit_limit_gtc":{"base_size":"1","limit_price":"70000.44","post_only":false,"rfq_disabled":false,"reduce_only":false}},"side":"SELL","client_order_id":"spot_order_1","status":"CANCELLED","time_in_force":"GOOD_UNTIL_CANCELLED","created_time":"2024-07-18T19:06:32.135980Z","completion_percentage":"0","filled_size":"0","average_filled_price":"0","fee":"","number_of_fills":"0","filled_value":"0","pending_cancel":false,"size_in_quote":false,"total_fees":"0","size_inclusive_of_fees":false,"total_value_after_fees":"0","trigger_status":"INVALID_ORDER_TYPE","order_type":"LIMIT","reject_reason":"REJECT_REASON_UNSPECIFIED","settled":false,"product_type":"SPOT","reject_message":"","cancel_message":"User
+        requested cancel","order_placement_source":"RETAIL_ADVANCED","outstanding_hold_amount":"0","is_liquidation":false,"last_fill_time":null,"edit_history":[],"leverage":"","margin_type":"UNKNOWN_MARGIN_TYPE","retail_portfolio_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","originating_order_id":"","attached_order_id":"","attached_order_configuration":null,"current_pending_replace":null,"commission_detail_total":null,"workable_size":"","workable_size_completion_pct":"","product_details":null,"cost_basis_method":"COST_BASIS_METHOD_UNSPECIFIED","displayed_order_config":"UNKNOWN_DISPLAYED_ORDER_CONFIG","equity_trading_session":"UNKNOWN_EQUITY_TRADING_SESSION","prediction_side":"PREDICTION_SIDE_UNKNOWN","last_update_time":null},{"order_id":"ff6e8dad-22c4-422d-bbf2-3c55b70e42d2","product_id":"BTC-USD","user_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","order_configuration":{"limit_limit_gtc":{"base_size":"1","limit_price":"70000.44","post_only":false,"rfq_disabled":false,"reduce_only":false}},"side":"SELL","client_order_id":"spot_order_2","status":"OPEN","time_in_force":"GOOD_UNTIL_CANCELLED","created_time":"2024-06-28T15:16:47.696748Z","completion_percentage":"0","filled_size":"0","average_filled_price":"0","fee":"","number_of_fills":"0","filled_value":"0","pending_cancel":false,"size_in_quote":false,"total_fees":"0","size_inclusive_of_fees":false,"total_value_after_fees":"0","trigger_status":"INVALID_ORDER_TYPE","order_type":"LIMIT","reject_reason":"REJECT_REASON_UNSPECIFIED","settled":false,"product_type":"SPOT","reject_message":"","cancel_message":"","order_placement_source":"RETAIL_ADVANCED","outstanding_hold_amount":"1","is_liquidation":false,"last_fill_time":null,"edit_history":[],"leverage":"","margin_type":"UNKNOWN_MARGIN_TYPE","retail_portfolio_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","originating_order_id":"","attached_order_id":"","attached_order_configuration":null,"current_pending_replace":null,"commission_detail_total":null,"workable_size":"","workable_size_completion_pct":"","product_details":null,"cost_basis_method":"COST_BASIS_METHOD_UNSPECIFIED","displayed_order_config":"UNKNOWN_DISPLAYED_ORDER_CONFIG","equity_trading_session":"UNKNOWN_EQUITY_TRADING_SESSION","prediction_side":"PREDICTION_SIDE_UNKNOWN","last_update_time":null},{"order_id":"c6981abf-a8b4-4209-b33f-2aa6ee8cd72f","product_id":"BTC-USD","user_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","order_configuration":{"limit_limit_gtc":{"base_size":"0.05","limit_price":"99900.83","post_only":false,"rfq_disabled":false,"reduce_only":false}},"side":"BUY","client_order_id":"originating_order","status":"OPEN","time_in_force":"GOOD_UNTIL_CANCELLED","created_time":"2024-12-11T18:36:12.323813Z","completion_percentage":"20","filled_size":"0.01","average_filled_price":"99900.83","fee":"","number_of_fills":"1","filled_value":"999.0083","pending_cancel":false,"size_in_quote":false,"total_fees":"0.69930581","size_inclusive_of_fees":false,"total_value_after_fees":"999.70760581","trigger_status":"INVALID_ORDER_TYPE","order_type":"LIMIT","reject_reason":"REJECT_REASON_UNSPECIFIED","settled":false,"product_type":"SPOT","reject_message":"","cancel_message":"","order_placement_source":"RETAIL_ADVANCED","outstanding_hold_amount":"5003.0335664000001","is_liquidation":false,"last_fill_time":"2024-12-11T18:36:14.410774Z","edit_history":[],"leverage":"","margin_type":"UNKNOWN_MARGIN_TYPE","retail_portfolio_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","originating_order_id":"","attached_order_id":"3daff354-c513-4c9d-869e-6ebf223364f4","attached_order_configuration":{"trigger_bracket_gtc":{"take_profit_price":"","stop_loss_price":"","limit_price":"99990","stop_trigger_price":"99800","reduce_only":false}},"current_pending_replace":null,"commission_detail_total":null,"workable_size":"","workable_size_completion_pct":"","product_details":null,"cost_basis_method":"COST_BASIS_METHOD_UNSPECIFIED","displayed_order_config":"UNKNOWN_DISPLAYED_ORDER_CONFIG","equity_trading_session":"UNKNOWN_EQUITY_TRADING_SESSION","prediction_side":"PREDICTION_SIDE_UNKNOWN","last_update_time":null},{"order_id":"3daff354-c513-4c9d-869e-6ebf223364f4","product_id":"BTC-USD","user_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","order_configuration":{"trigger_bracket_gtc":{"base_size":"0.05","take_profit_price":"","stop_loss_price":"","limit_price":"99990","stop_trigger_price":"99800","reduce_only":false}},"side":"SELL","client_order_id":"attached_order","status":"FILLED","time_in_force":"GOOD_UNTIL_CANCELLED","created_time":"2024-12-11T18:36:18.184309Z","completion_percentage":"100.00","filled_size":"0.05","average_filled_price":"99990","fee":"","number_of_fills":"3","filled_value":"4999.5","pending_cancel":false,"size_in_quote":false,"total_fees":"3.49965","size_inclusive_of_fees":false,"total_value_after_fees":"4996.00035","trigger_status":"INVALID_ORDER_TYPE","order_type":"TAKE_PROFIT_STOP_LOSS","reject_reason":"REJECT_REASON_UNSPECIFIED","settled":true,"product_type":"SPOT","reject_message":"","cancel_message":"","order_placement_source":"RETAIL_ADVANCED","outstanding_hold_amount":"0","is_liquidation":false,"last_fill_time":"2024-12-11T18:36:23.430757Z","edit_history":[],"leverage":"","margin_type":"UNKNOWN_MARGIN_TYPE","retail_portfolio_id":"eec99928-3d46-5b38-a1ca-122d0e5fb7f0","originating_order_id":"c6981abf-a8b4-4209-b33f-2aa6ee8cd72f","attached_order_id":"","attached_order_configuration":null,"current_pending_replace":null,"commission_detail_total":null,"workable_size":"","workable_size_completion_pct":"","product_details":null,"cost_basis_method":"COST_BASIS_METHOD_UNSPECIFIED","displayed_order_config":"UNKNOWN_DISPLAYED_ORDER_CONFIG","equity_trading_session":"UNKNOWN_EQUITY_TRADING_SESSION","prediction_side":"PREDICTION_SIDE_UNKNOWN","last_update_time":null}],"sequence":"0","has_next":false,"cursor":"","proof_token_required":false}'
+    headers:
+      CF-RAY:
+      - 9d1bdf4f7cf61c3f-EWR
+      Cache-Control:
+      - no-store,no-store
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:08 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=dCfbxxeDKgNfnNaxVgJigNwhN3HFVxOvZuAHhq762E63NCkhwhu6%2BLZt1NYvZ7ve5RVexP6JTqC8MLwFvZsb9qy7AqsopncTVVMu8463iozkjc%2FLZgM7%2Fn5ZpCI64u4gXXVi7h%2FAaJunHg%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - cb_dm=d7d866d1-71a7-48b5-a99f-8bda622f7432; Path=/; Domain=coinbase.com; Expires=Fri,
+        22 Feb 2036 04:52:08 GMT; HttpOnly; Secure
+      - __cf_bm=xRSmCcok96EuPa_Vw3R9kE0RYCNxkmm9DICHl90Wh4k-1771735928-1.0.1.1-02OdkGONUdlwFPqm90jG3mVh3Ews4268HOC2oBOsJQBjf7IseFFn9kIe3RkOOHjaTJjIZoNKNP8vmQINhJbOO.qlZN6Ofv2IF2DsHm5Buk4;
+        path=/; expires=Sun, 22-Feb-26 05:22:08 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=MEWnwNa9MbybEpeumNA7ksAOo1UteDJ79ywUgrM_ysk-1771735928297-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-headers:
+      - Authorization, Content-Type, Accept, Second-Factor-Proof-Token, Client-Id,
+        Access-Token, X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid,
+        X-Cb-Pagekey, X-Cb-UJS, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name,Content-Type,
+        Accept, Second-Factor-Proof-Token, Itp-Resource-Id-User_uuid, Client-Id, Access-Token,
+        X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid, X-Cb-Pagekey,
+        X-Cb-Ujs, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name, X-Datadog-Parent-Id,
+        X-Datadog-Trace-Id, X-Datadog-Origin, X-Datadog-Sampling-Priority, Itp-Resource-Id-X-Cb-Unmask
+      access-control-allow-methods:
+      - GET,POST,DELETE,PUT,GET,POST,DELETE,PUT,PATCH
+      access-control-allow-private-network:
+      - true,true
+      access-control-expose-headers:
+      - ''
+      access-control-max-age:
+      - 7200,7200
+      cf-cache-status:
+      - DYNAMIC
+      content-length:
+      - '6708'
+      cross-origin-opener-policy:
+      - same-origin
+      permissions-policy:
+      - camera=(), microphone=()
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      trace-id:
+      - '1407105568109356625'
+      - '1407105568109356625'
+      vary:
+      - Origin,Origin
+      x-content-type-options:
+      - nosniff
+      x-dns-prefetch-control:
+      - 'off'
+      - 'off'
+      x-download-options:
+      - noopen
+      - noopen
+      x-frame-options:
+      - SAMEORIGIN
+      - SAMEORIGIN
+      x-xss-protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

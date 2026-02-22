@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: GET
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/products?get_tradability_status=False&get_all_products=False
+  response:
+    body:
+      string: '404 page not found
+
+        '
+    headers:
+      CF-RAY:
+      - 9d1bdf4cdf8742bf-EWR
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '19'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:07 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=wZ0LTdduStwmw9%2By9Wv2aJKNC5dBniZwg001bVSY1uk547O%2Fjviw4YrL4NNlqEYuFOSWvR0veGLVR0%2FmkOzwNAyr%2B66T7Ndz1vfiHJP2r4MVTVf%2BMavE9wi3TEndt%2FW9Vwqp2tq99Ewx%2Bw%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=glDliRMjDT.PZLKovj98GXf4YzH9DSeWvgv.iLq6sl0-1771735927-1.0.1.1-Ixe2M9ZlYytZ_PY6NBbfwcD6i7WPRWE2mr74NMs2x4IODRyTpwISPiW4cMXpI76CfayC6nXN2VNo3EWhPPhytfOf6sN7dlC3WBVVNrYnXcY;
+        path=/; expires=Sun, 22-Feb-26 05:22:07 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=7NKotOYVlsdl7rJvdRpLodjDIOKdlgZsTCLkiRGEeI8-1771735927860-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      cf-cache-status:
+      - DYNAMIC
+      x-content-type-options:
+      - nosniff
+    status:
+      code: 404
+      message: Not Found
+version: 1

@@ -1,0 +1,100 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: GET
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/accounts?limit=250
+  response:
+    body:
+      string: '{"accounts":[{"uuid":"66f975a6-bb2e-44be-82e9-cd8669e404b0","name":"USDC
+        Wallet","currency":"USDC","available_balance":{"value":"100","currency":"USDC"},"default":true,"active":true,"created_at":"2023-12-14T21:40:32.181Z","updated_at":"2023-12-19T18:21:42.850Z","deleted_at":null,"type":"ACCOUNT_TYPE_CRYPTO","ready":true,"hold":{"value":"0","currency":"USDC"},"retail_portfolio_id":"1fb3c56a-489f-418c-8b5c-ce04268be5a6","platform":"ACCOUNT_PLATFORM_CONSUMER"},{"uuid":"646ec0d2-d874-4f2a-9482-32176f297211","name":"ETH
+        Wallet","currency":"ETH","available_balance":{"value":"1","currency":"ETH"},"default":true,"active":true,"created_at":"2023-09-26T22:21:19.524Z","updated_at":"2023-12-19T18:21:42.806Z","deleted_at":null,"type":"ACCOUNT_TYPE_CRYPTO","ready":true,"hold":{"value":"0","currency":"ETH"},"retail_portfolio_id":"1fb3c56a-489f-418c-8b5c-ce04268be5a6","platform":"ACCOUNT_PLATFORM_CFM_CONSUMER"},{"uuid":"81b5dca0-5775-4a21-b872-fc850046c99b","name":"Cash
+        (USD)","currency":"USD","available_balance":{"value":"100","currency":"USD"},"default":false,"active":true,"created_at":"2023-08-11T03:31:08.743Z","updated_at":"2023-08-11T03:31:08.990Z","deleted_at":null,"type":"ACCOUNT_TYPE_FIAT","ready":true,"hold":{"value":"0","currency":"USD"},"retail_portfolio_id":"1fb3c56a-489f-418c-8b5c-ce04268be5a6","platform":"ACCOUNT_PLATFORM_CONSUMER"},{"uuid":"31e698c7-edd1-43b7-a0db-5c87fc15ea52","name":"BTC
+        Wallet","currency":"BTC","available_balance":{"value":"0.5","currency":"BTC"},"default":true,"active":true,"created_at":"2023-08-09T14:17:42.913Z","updated_at":"2023-08-09T14:17:42.913Z","deleted_at":null,"type":"ACCOUNT_TYPE_CRYPTO","ready":true,"hold":{"value":"0","currency":"BTC"},"retail_portfolio_id":"1fb3c56a-489f-418c-8b5c-ce04268be5a6","platform":"ACCOUNT_PLATFORM_CONSUMER"}],"has_next":false,"cursor":"","size":4}'
+    headers:
+      CF-RAY:
+      - 9d1bdf4c4bc032b1-EWR
+      Cache-Control:
+      - no-store,no-store
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:07 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=tWnRMlL2nizSyZl8gE5cKLTJAh4e3IYwgSnV7HPT0zuZZG0IqbyngMYitmt7r%2BcGstKV91OVVwoYWF%2BimZrbGeMKlGM8wiJvBVOFMejGmVwz7GKVSvRUxi6%2F5%2BMlF3HjhSPwO4HOPJWdpg%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - cb_dm=0d48ab32-e5c8-40be-a4d9-0b59c1e8ab54; Path=/; Domain=coinbase.com; Expires=Fri,
+        22 Feb 2036 04:52:07 GMT; HttpOnly; Secure
+      - __cf_bm=xRMdF9_eaR3rlkybdIj.WH_6.ZQS1ctbKyO5Wl40LHQ-1771735927-1.0.1.1-QJ_sm9ryW0BRfUdn.HAZaYhJgUYh2mgq7RTyL7Z91D6RuT1g8HAJwciyWjQcxj8zmJXkqMbW91yIl0Q.DGVWPVQ3Eh3HI1TlBokx4FY0ke8;
+        path=/; expires=Sun, 22-Feb-26 05:22:07 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=naT8flZHJUwTyCmOpRJzmvFF.hqtYTY2Uj8CC2HzIZk-1771735927753-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-headers:
+      - Authorization, Content-Type, Accept, Second-Factor-Proof-Token, Client-Id,
+        Access-Token, X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid,
+        X-Cb-Pagekey, X-Cb-UJS, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name,Content-Type,
+        Accept, Second-Factor-Proof-Token, Itp-Resource-Id-User_uuid, Client-Id, Access-Token,
+        X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid, X-Cb-Pagekey,
+        X-Cb-Ujs, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name, X-Datadog-Parent-Id,
+        X-Datadog-Trace-Id, X-Datadog-Origin, X-Datadog-Sampling-Priority, Itp-Resource-Id-X-Cb-Unmask
+      access-control-allow-methods:
+      - GET,POST,DELETE,PUT,GET,POST,DELETE,PUT,PATCH
+      access-control-allow-private-network:
+      - true,true
+      access-control-expose-headers:
+      - ''
+      access-control-max-age:
+      - 7200,7200
+      cf-cache-status:
+      - DYNAMIC
+      content-length:
+      - '1837'
+      cross-origin-opener-policy:
+      - same-origin
+      permissions-policy:
+      - camera=(), microphone=()
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      trace-id:
+      - '6459377472123480980'
+      - '6459377472123480980'
+      vary:
+      - Origin,Origin
+      x-content-type-options:
+      - nosniff
+      x-dns-prefetch-control:
+      - 'off'
+      - 'off'
+      x-download-options:
+      - noopen
+      - noopen
+      x-frame-options:
+      - SAMEORIGIN
+      - SAMEORIGIN
+      x-xss-protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

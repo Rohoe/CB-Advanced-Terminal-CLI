@@ -480,6 +480,11 @@ def sandbox_client():
     The sandbox environment requires NO authentication and returns
     static, pre-defined responses.
 
+    The SDK normally requires API keys even to construct requests,
+    so we create the client without credentials and then patch
+    is_authenticated to bypass the SDK's auth gate. The sandbox
+    doesn't require an Authorization header.
+
     Returns:
         CoinbaseAPIClient: Client configured for sandbox environment.
 
@@ -489,12 +494,31 @@ def sandbox_client():
     """
     from api_client import CoinbaseAPIClient
 
-    return CoinbaseAPIClient(
-        api_key='',  # Not required for sandbox
-        api_secret='',  # Not required for sandbox
+    client = CoinbaseAPIClient(
+        api_key=None,
+        api_secret=None,
         base_url='api-sandbox.coinbase.com',
         verbose=True
     )
+    # The sandbox requires no auth, but the SDK raises AuthenticationError
+    # for unauthenticated requests to "private" endpoints. Bypass this by
+    # telling the SDK it's authenticated (set_headers will skip the JWT
+    # since api_key/api_secret are None — we override set_headers too).
+    client._client.is_authenticated = True
+
+    # Override set_headers to never attempt JWT generation
+    original_set_headers = client._client.set_headers.__func__ if hasattr(client._client.set_headers, '__func__') else None
+
+    def sandbox_set_headers(self, method, path):
+        return {
+            "User-Agent": "coinbase-advanced-py",
+            "Content-Type": "application/json",
+        }
+
+    import types
+    client._client.set_headers = types.MethodType(sandbox_set_headers, client._client)
+
+    return client
 
 
 # =============================================================================

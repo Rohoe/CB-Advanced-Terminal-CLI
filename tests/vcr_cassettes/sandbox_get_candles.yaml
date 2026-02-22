@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: GET
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/products/BTC-USD/candles?start=1771649528&end=1771735928&granularity=ONE_HOUR
+  response:
+    body:
+      string: '404 page not found
+
+        '
+    headers:
+      CF-RAY:
+      - 9d1bdf510f8ce55d-EWR
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '19'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:08 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=mQkX06wy2sS%2BaqZQO6gh46VLgsADRCa%2B%2BOnsTW%2FDmi5hHy%2BdIhyJEVTnir9Kqw8yTPOfyAY1qHCJTIMPy0yLny10GbjD3wOISgK2UeQNumUKRKo%2BN9j9cIzAh072wZRUlLOPcM4ivLa%2BlQ%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=IBmgM2pAWHFaWDutJfLHfnc_AQVmFcwfjSSIigrATRM-1771735928-1.0.1.1-awWe9OBg3GGIfAhHocUg3Q1idnE2hSvs5iaGeOt25se.mOszFCHinbkeCYsYDsrK3g8UBowtMaD5sjgS4wlHhZ0yycaOQgv1MHj.E651OQI;
+        path=/; expires=Sun, 22-Feb-26 05:22:08 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=6I1718JeBGXxwKKdOSRWb7mnHi26llxgzKG52p9Y59M-1771735928539-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      cf-cache-status:
+      - DYNAMIC
+      x-content-type-options:
+      - nosniff
+    status:
+      code: 404
+      message: Not Found
+version: 1

@@ -1,0 +1,96 @@
+interactions:
+- request:
+    body: '{"order_ids": ["nonexistent-order-id"]}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '39'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: POST
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/orders/batch_cancel
+  response:
+    body:
+      string: '{"results":[{"success":true,"failure_reason":"UNKNOWN_CANCEL_FAILURE_REASON","order_id":"f898eaf4-6ffc-47be-a159-7ff292e5cdcf"}]}'
+    headers:
+      CF-RAY:
+      - 9d1bdf529d8e43f7-EWR
+      Cache-Control:
+      - no-store,no-store
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:08 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=8X1zr4nim8ClChM6tkZkyGbEZjTFMbo5mgnGk82l1olZlsbU5ey2qHu2fSLNhEA6Jft1genmmX6rn5Uk7oCdRzWzCK%2FLRPeT3n4YYQD%2FBx3AdxWkq0xHlL%2Fi8z5hH8k0wzCO%2F4rk2ilEaw%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - cb_dm=1eac163f-e90d-4230-b77e-677317272175; Path=/; Domain=coinbase.com; Expires=Fri,
+        22 Feb 2036 04:52:08 GMT; HttpOnly; Secure
+      - __cf_bm=uGwUUy8nLzl5Mrxv5bntQK6utzJTqPfSexhtq7gz8UU-1771735928-1.0.1.1-7553iZ8gDjwUzIjdqFWH0wrkiYNaeOwjCj2dYFyz72jrbG0XdXSzbcDnjoVLHjXLn5s7_KsqGwRoBsUqMvPVA2VoPEe8qFUQz.xGAg65rD4;
+        path=/; expires=Sun, 22-Feb-26 05:22:08 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=D6Hndumx.gSkfbislMLhUinnJY.hsAOoQNHC0fQIMTY-1771735928807-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-headers:
+      - Authorization, Content-Type, Accept, Second-Factor-Proof-Token, Client-Id,
+        Access-Token, X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid,
+        X-Cb-Pagekey, X-Cb-UJS, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name,Content-Type,
+        Accept, Second-Factor-Proof-Token, Itp-Resource-Id-User_uuid, Client-Id, Access-Token,
+        X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid, X-Cb-Pagekey,
+        X-Cb-Ujs, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name, X-Datadog-Parent-Id,
+        X-Datadog-Trace-Id, X-Datadog-Origin, X-Datadog-Sampling-Priority, Itp-Resource-Id-X-Cb-Unmask
+      access-control-allow-methods:
+      - GET,POST,DELETE,PUT,GET,POST,DELETE,PUT,PATCH
+      access-control-allow-private-network:
+      - true,true
+      access-control-expose-headers:
+      - ''
+      access-control-max-age:
+      - 7200,7200
+      cf-cache-status:
+      - DYNAMIC
+      content-length:
+      - '129'
+      cross-origin-opener-policy:
+      - same-origin
+      permissions-policy:
+      - camera=(), microphone=()
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      trace-id:
+      - '1852157028004658599'
+      - '1852157028004658599'
+      vary:
+      - Origin,Origin
+      x-content-type-options:
+      - nosniff
+      x-dns-prefetch-control:
+      - 'off'
+      - 'off'
+      x-download-options:
+      - noopen
+      - noopen
+      x-frame-options:
+      - SAMEORIGIN
+      - SAMEORIGIN
+      x-xss-protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

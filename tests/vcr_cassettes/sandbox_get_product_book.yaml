@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - coinbase-advanced-py
+    method: GET
+    uri: https://api-sandbox.coinbase.com/api/v3/brokerage/product_book?product_id=BTC-USD&limit=1
+  response:
+    body:
+      string: '404 page not found
+
+        '
+    headers:
+      CF-RAY:
+      - 9d1bdf4edfd5f799-EWR
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '19'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 04:52:08 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=GrKNCM%2FnuAxm4sBi0LYDMoBWQptKfjcIE42dAU9GeMh6ei%2BeGDJrbYvC9cFpemY4AOeb2GmS1SkR4qf2JYTmFt5Ei%2FZu%2FywT%2BA5R4EaYlimsYcL9Mil3IOt21084uYSBpzHvMCbJCgiiqQ%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=OMiR13ynNFnhoi5hA2qI3E0gEyx1ddz3VENHzaILcjE-1771735928-1.0.1.1-WTMGNOPpaJ7rvH0urNgU56IR5fgXWgYtjyiorS0o8bcYx9r3sFx77XiPv6X1bOmbU2fx3u97HZNGu1o.IjDumvXcYyQ65HXiStAsa6DQ_Ag;
+        path=/; expires=Sun, 22-Feb-26 05:22:08 GMT; domain=.coinbase.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=mS5GNQUk9g_WVkBpFIx2.1p9ZRJl9_3S3KK6th64A34-1771735928177-0.0.1.1-604800000;
+        path=/; domain=.coinbase.com; HttpOnly; Secure; SameSite=None
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      cf-cache-status:
+      - DYNAMIC
+      x-content-type-options:
+      - nosniff
+    status:
+      code: 404
+      message: Not Found
+version: 1

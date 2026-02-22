@@ -92,7 +92,7 @@ This enables testing with mock implementations (no real API calls, in-memory sto
 - Uses `check_order_fills_batch()` for efficiency
 - Thread-safe with `self.order_lock`
 
-**TWAP Execution Flow:**
+**TWAP Execution Flow (legacy):**
 1. User input → `get_order_input()` validates parameters
 2. Create `TWAPOrder` dataclass with UUID
 3. Persist via `twap_storage.save_twap_order()`
@@ -100,6 +100,20 @@ This enables testing with mock implementations (no real API calls, in-memory sto
 5. Each slice: fetch prices → validate → `place_twap_slice()`
 6. Background thread monitors fills via order queue
 7. Display summary with `display_twap_summary()`
+
+**TWAP Strategy Execution Flow (new):**
+1. Create `TWAPStrategy` with parameters, config, and optional API client
+2. Call `TWAPExecutor.execute_strategy(strategy)` which uses the `OrderStrategy` protocol:
+   - `strategy.calculate_slices()` → uniform timing with optional jitter
+   - For each slice: `should_skip_slice()` checks participation rate cap
+   - `get_execution_price()` resolves 4 price types (limit/bid/mid/ask)
+   - `on_slice_complete()` tracks fills and failures
+3. Returns `StrategyResult` with execution metrics
+
+**TWAPStrategy** (`twap_strategy.py`) features:
+- Jitter: randomizes interval timing ±jitter_pct (seeded for test reproducibility)
+- Participation rate cap: fetches candle volume, skips slice if `slice_size / recent_volume > cap`
+- 4 price types: limit (fixed), bid, mid, ask (from order book)
 
 ### Data Models
 
@@ -156,19 +170,25 @@ self.order_to_twap_map = {'order_id': 'twap_id'}
 **Test Organization:**
 ```
 tests/
-├── conftest.py              # Shared fixtures
+├── conftest.py              # Shared fixtures (mock_api_client, sandbox_client, etc.)
 ├── test_validators.py       # Unit tests for validators
 ├── test_rate_limiter.py     # Unit tests for rate limiter
 ├── test_twap_tracker.py     # Unit tests for TWAP tracker
 ├── test_trading_terminal.py # Unit tests for terminal
 ├── integration/             # Integration tests
-│   ├── test_twap_execution.py
-│   ├── test_order_lifecycle.py
-│   └── test_portfolio_display.py
+│   ├── test_twap_execution.py       # TWAP execution with mocks
+│   ├── test_order_lifecycle.py      # Order lifecycle with mocks
+│   ├── test_portfolio_display.py    # Portfolio display with mocks
+│   ├── test_sandbox_api.py          # Sandbox API endpoint tests
+│   ├── test_sandbox_modules.py      # Extracted modules vs sandbox API
+│   ├── test_scaled_execution.py     # Full scaled order flow (mock-based)
+│   ├── test_vwap_execution.py       # Full VWAP order flow (mock-based)
+│   └── test_vcr_recording.py        # VCR cassette recording/replay
 ├── mocks/                   # Mock implementations
 │   └── mock_coinbase_api.py
-└── schemas/                 # Pydantic API response schemas
-    └── api_responses.py
+├── schemas/                 # Pydantic API response schemas
+│   └── api_responses.py
+└── vcr_cassettes/           # Recorded API responses (YAML)
 ```
 
 **Key Fixtures** (`tests/conftest.py`):
@@ -178,19 +198,36 @@ tests/
 - `sample_twap_order`: Realistic test order data
 - `terminal_with_mocks`: Fully configured terminal for integration tests
 - `temp_storage_dir`: Auto-cleanup temp directory
+- `sandbox_client`: CoinbaseAPIClient pointed at sandbox (no auth, patches SDK auth gate)
 
 **Test Markers:**
 - `@pytest.mark.unit`: Fast, isolated tests
 - `@pytest.mark.integration`: Multi-component tests
 - `@pytest.mark.slow`: Long-running tests
 - `@pytest.mark.vcr`: Uses VCR.py for API recording/replay
-- `@pytest.mark.sandbox`: Requires sandbox environment
+- `@pytest.mark.sandbox`: Requires sandbox environment (`COINBASE_SANDBOX_MODE=true`)
+
+**Running integration tests:**
+```bash
+# Mock-based integration tests (no API keys needed, always run)
+pytest tests/integration/test_scaled_execution.py tests/integration/test_vwap_execution.py -v
+
+# Sandbox tests (Coinbase sandbox — supports Accounts and Orders only)
+COINBASE_SANDBOX_MODE=true pytest -m sandbox -v
+
+# VCR replay tests (uses recorded cassettes, no network needed)
+pytest -m vcr -v
+```
+
+**Sandbox Limitations:**
+The Coinbase Advanced Trade sandbox (`api-sandbox.coinbase.com`) only supports Accounts and Orders endpoints. Products, candles, product book, and transaction summary return 404. Tests for unsupported endpoints gracefully skip via `pytest.skip()`. The `sandbox_client` fixture bypasses the SDK's JWT auth gate since the sandbox requires no authentication.
 
 **VCR.py Integration:**
 - Records/replays HTTP interactions
 - Cassettes stored in `tests/vcr_cassettes/`
 - Filters sensitive headers (authorization, API keys)
 - Use `@api_vcr.use_cassette('test_name.yaml')` decorator
+- To re-record: delete cassettes and run with `COINBASE_SANDBOX_MODE=true`
 
 ## Important Patterns
 
@@ -227,6 +264,14 @@ tests/
 - `RATE_LIMIT_RPS`: Requests per second (default: 25)
 - `RATE_LIMIT_BURST`: Burst capacity (default: 50)
 - `CACHE_ACCOUNT_TTL`: Account cache TTL (default: 60)
+- `TWAP_JITTER_PCT`: Jitter percentage for TWAP intervals (default: 0.0)
+- `TWAP_ADAPTIVE_ENABLED`: Enable adaptive cancel+replace (default: false)
+- `TWAP_ADAPTIVE_TIMEOUT`: Adaptive timeout seconds (default: 30)
+- `TWAP_ADAPTIVE_MAX_RETRIES`: Max adaptive retries (default: 3)
+- `TWAP_PARTICIPATION_RATE_CAP`: Participation rate cap fraction (default: 0.0)
+- `TWAP_VOLUME_LOOKBACK`: Volume lookback minutes (default: 5)
+- `TWAP_MARKET_FALLBACK_ENABLED`: Enable market order fallback (default: false)
+- `TWAP_MARKET_FALLBACK_REMAINING_SLICES`: Remaining slices for fallback (default: 1)
 - See `config_manager.py` for full list
 
 **Security:**
