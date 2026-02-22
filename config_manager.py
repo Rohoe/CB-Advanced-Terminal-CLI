@@ -74,17 +74,41 @@ class TWAPConfig:
         max_slices: Maximum number of slices allowed.
         max_duration_minutes: Maximum TWAP duration in minutes.
         min_duration_minutes: Minimum TWAP duration in minutes.
+        jitter_pct: Randomize interval timing +/- this percentage (0.0 = disabled).
+        adaptive_enabled: Whether to cancel+replace unfilled orders.
+        adaptive_timeout_seconds: Seconds to wait before cancel+replace.
+        adaptive_max_retries: Maximum cancel+replace attempts per slice.
+        participation_rate_cap: Max slice as fraction of recent volume (0.0 = disabled).
+        volume_lookback_minutes: Minutes of recent volume to consider for participation cap.
+        market_fallback_enabled: Whether to use market orders for final slices.
+        market_fallback_remaining_slices: Switch to market orders when this many slices remain.
 
     Environment Variables:
         TWAP_SLICE_DELAY: Delay between slices (default: 2)
         TWAP_MAX_SLICES: Maximum slices (default: 1000)
         TWAP_MAX_DURATION: Maximum duration in minutes (default: 1440)
         TWAP_MIN_DURATION: Minimum duration in minutes (default: 1)
+        TWAP_JITTER_PCT: Jitter percentage (default: 0.0)
+        TWAP_ADAPTIVE_ENABLED: Enable adaptive cancel+replace (default: false)
+        TWAP_ADAPTIVE_TIMEOUT: Adaptive timeout in seconds (default: 30)
+        TWAP_ADAPTIVE_MAX_RETRIES: Max adaptive retries (default: 3)
+        TWAP_PARTICIPATION_RATE_CAP: Participation rate cap (default: 0.0)
+        TWAP_VOLUME_LOOKBACK: Volume lookback in minutes (default: 5)
+        TWAP_MARKET_FALLBACK_ENABLED: Enable market fallback (default: false)
+        TWAP_MARKET_FALLBACK_REMAINING_SLICES: Remaining slices for fallback (default: 1)
     """
     slice_delay: int = 2
     max_slices: int = 1000
     max_duration_minutes: int = 1440  # 24 hours
     min_duration_minutes: int = 1
+    jitter_pct: float = 0.0
+    adaptive_enabled: bool = False
+    adaptive_timeout_seconds: int = 30
+    adaptive_max_retries: int = 3
+    participation_rate_cap: float = 0.0
+    volume_lookback_minutes: int = 5
+    market_fallback_enabled: bool = False
+    market_fallback_remaining_slices: int = 1
 
 
 @dataclass
@@ -204,7 +228,15 @@ class AppConfig:
             slice_delay=int(os.getenv('TWAP_SLICE_DELAY', '2')),
             max_slices=int(os.getenv('TWAP_MAX_SLICES', '1000')),
             max_duration_minutes=int(os.getenv('TWAP_MAX_DURATION', '1440')),
-            min_duration_minutes=int(os.getenv('TWAP_MIN_DURATION', '1'))
+            min_duration_minutes=int(os.getenv('TWAP_MIN_DURATION', '1')),
+            jitter_pct=float(os.getenv('TWAP_JITTER_PCT', '0.0')),
+            adaptive_enabled=os.getenv('TWAP_ADAPTIVE_ENABLED', 'false').lower() == 'true',
+            adaptive_timeout_seconds=int(os.getenv('TWAP_ADAPTIVE_TIMEOUT', '30')),
+            adaptive_max_retries=int(os.getenv('TWAP_ADAPTIVE_MAX_RETRIES', '3')),
+            participation_rate_cap=float(os.getenv('TWAP_PARTICIPATION_RATE_CAP', '0.0')),
+            volume_lookback_minutes=int(os.getenv('TWAP_VOLUME_LOOKBACK', '5')),
+            market_fallback_enabled=os.getenv('TWAP_MARKET_FALLBACK_ENABLED', 'false').lower() == 'true',
+            market_fallback_remaining_slices=int(os.getenv('TWAP_MARKET_FALLBACK_REMAINING_SLICES', '1'))
         )
 
     def _load_retry_config(self) -> RetryConfig:
@@ -247,7 +279,15 @@ class AppConfig:
                 'slice_delay': self.twap.slice_delay,
                 'max_slices': self.twap.max_slices,
                 'max_duration_minutes': self.twap.max_duration_minutes,
-                'min_duration_minutes': self.twap.min_duration_minutes
+                'min_duration_minutes': self.twap.min_duration_minutes,
+                'jitter_pct': self.twap.jitter_pct,
+                'adaptive_enabled': self.twap.adaptive_enabled,
+                'adaptive_timeout_seconds': self.twap.adaptive_timeout_seconds,
+                'adaptive_max_retries': self.twap.adaptive_max_retries,
+                'participation_rate_cap': self.twap.participation_rate_cap,
+                'volume_lookback_minutes': self.twap.volume_lookback_minutes,
+                'market_fallback_enabled': self.twap.market_fallback_enabled,
+                'market_fallback_remaining_slices': self.twap.market_fallback_remaining_slices
             },
             'retry': {
                 'max_retries': self.retry.max_retries,
