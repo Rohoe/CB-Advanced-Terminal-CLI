@@ -13,7 +13,7 @@ from tabulate import tabulate
 
 from vwap_strategy import VWAPStrategy, VWAPStrategyConfig
 from order_executor import CancelledException
-from validators import InputValidator, ValidationError
+from input_helpers import InteractiveInputHelper
 from ui_helpers import (
     info, highlight, format_currency, format_side, format_status,
     print_header, print_subheader, print_success, print_error,
@@ -40,6 +40,7 @@ class VWAPExecutor:
         self.market_data = market_data
         self.api_client = api_client
         self.config = config
+        self._input_helper = InteractiveInputHelper(market_data)
 
         # Store strategy references for display later
         self._strategies: dict = {}
@@ -57,64 +58,27 @@ class VWAPExecutor:
         """
         try:
             # Select market
-            product_id = self.market_data.select_market(get_input_fn)
+            product_id = self._input_helper.get_market(get_input_fn)
             if not product_id:
                 return None
 
             # Get side
-            while True:
-                side = get_input_fn("\nEnter order side (buy/sell)").upper()
-                if side in ['BUY', 'SELL']:
-                    break
-                print("Invalid side. Please enter 'buy' or 'sell'.")
+            side = self._input_helper.get_side(get_input_fn)
 
             # Display market conditions
-            current_prices = self.market_data.get_current_prices(product_id)
-            if current_prices:
-                self.market_data.display_market_conditions(product_id, side, current_prices)
+            self._input_helper.display_market_conditions(product_id, side)
 
             # Get limit price
-            while True:
-                try:
-                    limit_price = float(get_input_fn("\nEnter limit price"))
-                    InputValidator.validate_price(limit_price)
-                    break
-                except (ValueError, ValidationError) as e:
-                    print(f"Invalid price: {e}")
+            limit_price = self._input_helper.get_price(get_input_fn)
 
             # Get total size
-            while True:
-                try:
-                    total_size = float(get_input_fn("Enter total order size"))
-                    if total_size <= 0:
-                        print("Size must be greater than 0.")
-                        continue
-                    break
-                except ValueError:
-                    print("Please enter a valid number.")
+            total_size = self._input_helper.get_size(get_input_fn, prompt="Enter total order size")
 
             # Get duration
-            while True:
-                try:
-                    duration = int(get_input_fn("\nEnter VWAP duration in minutes"))
-                    InputValidator.validate_twap_duration(duration)
-                    break
-                except (ValueError, ValidationError) as e:
-                    print(f"Invalid duration: {e}")
+            duration = self._input_helper.get_duration(get_input_fn, prompt="\nEnter VWAP duration in minutes")
 
             # Get number of slices
-            while True:
-                try:
-                    num_slices = int(get_input_fn("Enter number of slices"))
-                    if num_slices < 2:
-                        print("Need at least 2 slices.")
-                        continue
-                    if num_slices > 1000:
-                        print("Maximum 1000 slices.")
-                        continue
-                    break
-                except ValueError:
-                    print("Please enter a valid number.")
+            num_slices = self._input_helper.get_num_slices(get_input_fn)
 
             # Get price type
             print("\nSelect price type for order placement:")

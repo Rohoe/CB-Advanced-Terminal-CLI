@@ -11,6 +11,7 @@ from datetime import datetime
 from threading import Lock
 
 from conditional_orders import StopLimitOrder, BracketOrder, AttachedBracketOrder
+from input_helpers import InteractiveInputHelper
 from ui_helpers import (
     format_currency, format_side, format_status,
     print_header, print_subheader, print_success, print_error,
@@ -34,34 +35,21 @@ class ConditionalExecutor:
         self.config = config
         self.order_to_conditional_map = {}
         self.conditional_lock = Lock()
+        self._input_helper = InteractiveInputHelper(market_data)
 
     def get_conditional_order_input(self, get_input_fn):
         """Get order input without limit price (for conditional orders)."""
         from order_executor import CancelledException
         try:
-            product_id = self.market_data.select_market(get_input_fn)
+            product_id = self._input_helper.get_market(get_input_fn)
             if not product_id:
                 return None
 
-            while True:
-                side = get_input_fn("\nEnter order side (buy/sell)").upper()
-                if side in ['BUY', 'SELL']:
-                    break
-                print("Invalid side. Please enter 'buy' or 'sell'.")
+            side = self._input_helper.get_side(get_input_fn)
 
-            current_prices = self.market_data.get_current_prices(product_id)
-            if current_prices:
-                self.market_data.display_market_conditions(product_id, side, current_prices)
+            self._input_helper.display_market_conditions(product_id, side)
 
-            while True:
-                try:
-                    base_size = float(get_input_fn("\nEnter order size"))
-                    if base_size <= 0:
-                        print("Size must be greater than 0.")
-                        continue
-                    break
-                except ValueError:
-                    print("Please enter a valid number.")
+            base_size = self._input_helper.get_size(get_input_fn, prompt="\nEnter order size")
 
             product_info = self.api_client.get_product(product_id)
             min_size = float(product_info['base_min_size'])

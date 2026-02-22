@@ -15,6 +15,7 @@ from scaled_orders import ScaledOrder, ScaledOrderLevel, DistributionType
 from scaled_strategy import ScaledStrategy
 from scaled_order_tracker import ScaledOrderTracker
 from order_executor import CancelledException
+from input_helpers import InteractiveInputHelper
 from validators import InputValidator, ValidationError
 from ui_helpers import (
     info, highlight, format_currency, format_side, format_status,
@@ -42,6 +43,7 @@ class ScaledExecutor:
         self.order_queue = order_queue
         self.config = config
         self.scaled_tracker = ScaledOrderTracker()
+        self._input_helper = InteractiveInputHelper(market_data)
 
     def place_scaled_order(self, get_input_fn: Callable) -> Optional[str]:
         """
@@ -55,30 +57,18 @@ class ScaledExecutor:
         """
         try:
             # Select market
-            product_id = self.market_data.select_market(get_input_fn)
+            product_id = self._input_helper.get_market(get_input_fn)
             if not product_id:
                 return None
 
             # Get side
-            while True:
-                side = get_input_fn("\nEnter order side (buy/sell)").upper()
-                if side in ['BUY', 'SELL']:
-                    break
-                print("Invalid side. Please enter 'buy' or 'sell'.")
+            side = self._input_helper.get_side(get_input_fn)
 
             # Display market conditions
-            current_prices = self.market_data.get_current_prices(product_id)
-            if current_prices:
-                self.market_data.display_market_conditions(product_id, side, current_prices)
+            self._input_helper.display_market_conditions(product_id, side)
 
             # Get price range
-            while True:
-                try:
-                    price_low = float(get_input_fn("\nEnter low price"))
-                    InputValidator.validate_price(price_low)
-                    break
-                except (ValueError, ValidationError) as e:
-                    print(f"Invalid price: {e}")
+            price_low = self._input_helper.get_price(get_input_fn, prompt="\nEnter low price")
 
             while True:
                 try:
@@ -92,15 +82,7 @@ class ScaledExecutor:
                     print(f"Invalid price: {e}")
 
             # Get total size
-            while True:
-                try:
-                    total_size = float(get_input_fn("\nEnter total order size"))
-                    if total_size <= 0:
-                        print("Size must be greater than 0.")
-                        continue
-                    break
-                except ValueError:
-                    print("Please enter a valid number.")
+            total_size = self._input_helper.get_size(get_input_fn, prompt="\nEnter total order size")
 
             # Get number of orders
             try:
