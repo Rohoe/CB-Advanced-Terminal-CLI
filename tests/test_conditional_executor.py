@@ -2,7 +2,7 @@
 Unit tests for ConditionalExecutor (conditional_executor.py).
 
 Tests cover stop-loss direction detection, take-profit direction detection,
-and bracket order validation.
+bracket order validation, entry+bracket placement, view/cancel/sync operations.
 
 To run:
     pytest tests/test_conditional_executor.py -v
@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 from queue import Queue
 
 from conditional_executor import ConditionalExecutor
+from conditional_orders import StopLimitOrder, BracketOrder, AttachedBracketOrder
 from conditional_order_tracker import ConditionalOrderTracker
 from order_executor import OrderExecutor
 from market_data import MarketDataService
@@ -311,5 +312,335 @@ class TestBracketValidation:
                 order_id = executor.place_bracket_for_position(lambda prompt: next(inputs))
 
             assert order_id is None
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+
+# =============================================================================
+# Entry + Bracket Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestEntryWithBracket:
+    """Tests for place_entry_with_bracket."""
+
+    def test_buy_entry_with_bracket_success(self):
+        """BUY entry with valid TP > SL should succeed."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        api.set_account_balance('USDC', 100000.0)
+
+        try:
+            with patch.object(executor.order_executor, 'get_order_input',
+                              return_value={'product_id': 'BTC-USDC', 'side': 'BUY',
+                                            'base_size': 0.1, 'limit_price': 50000.0}):
+                # tp_price, sl_price, confirm
+                inputs = iter(['55000', '48000', 'yes'])
+                order_id = executor.place_entry_with_bracket(lambda prompt: next(inputs))
+
+            assert order_id is not None
+            order = tracker.get_attached_bracket_order(order_id)
+            assert order is not None
+            assert order.status == 'PENDING'
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_sell_entry_with_bracket_success(self):
+        """SELL entry with valid SL > TP should succeed."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        api.set_account_balance('BTC', 10.0)
+
+        try:
+            with patch.object(executor.order_executor, 'get_order_input',
+                              return_value={'product_id': 'BTC-USDC', 'side': 'SELL',
+                                            'base_size': 0.1, 'limit_price': 50000.0}):
+                # For SELL: SL must be above TP
+                inputs = iter(['48000', '52000', 'yes'])
+                order_id = executor.place_entry_with_bracket(lambda prompt: next(inputs))
+
+            assert order_id is not None
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_buy_entry_bracket_sl_above_tp_rejected(self):
+        """BUY entry with SL >= TP should be rejected."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+
+        try:
+            with patch.object(executor.order_executor, 'get_order_input',
+                              return_value={'product_id': 'BTC-USDC', 'side': 'BUY',
+                                            'base_size': 0.1, 'limit_price': 50000.0}):
+                # SL (56000) >= TP (55000) — invalid for BUY
+                inputs = iter(['55000', '56000', 'yes'])
+                order_id = executor.place_entry_with_bracket(lambda prompt: next(inputs))
+
+            assert order_id is None
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_entry_bracket_user_cancellation(self):
+        """User declining should return None."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+
+        try:
+            with patch.object(executor.order_executor, 'get_order_input',
+                              return_value={'product_id': 'BTC-USDC', 'side': 'BUY',
+                                            'base_size': 0.1, 'limit_price': 50000.0}):
+                inputs = iter(['55000', '48000', 'no'])
+                order_id = executor.place_entry_with_bracket(lambda prompt: next(inputs))
+
+            assert order_id is None
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_entry_bracket_no_order_input(self):
+        """If get_order_input returns None, should return None."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+
+        try:
+            with patch.object(executor.order_executor, 'get_order_input', return_value=None):
+                order_id = executor.place_entry_with_bracket(lambda prompt: '')
+
+            assert order_id is None
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+
+# =============================================================================
+# View Conditional Orders Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestViewConditionalOrders:
+    """Tests for view_conditional_orders."""
+
+    def test_view_empty_state(self):
+        """Empty tracker should print 'No conditional orders found'."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            executor.view_conditional_orders()  # Should not raise
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_view_with_stop_limit_orders(self):
+        """Should display stop-limit orders table."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-view-1', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            executor.view_conditional_orders()  # Should not raise
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_view_with_bracket_orders(self):
+        """Should display bracket orders table."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_bracket_order(BracketOrder(
+                order_id='br-view-1', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                limit_price='55000', stop_trigger_price='48000',
+                status='ACTIVE', created_at='2026-01-01T12:00:00Z'
+            ))
+            executor.view_conditional_orders()  # Should not raise
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_view_with_attached_bracket_orders(self):
+        """Should display attached bracket orders table."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_attached_bracket_order(AttachedBracketOrder(
+                entry_order_id='ab-view-1', client_order_id='c-1',
+                product_id='BTC-USD', side='BUY', base_size='0.1',
+                entry_limit_price='50000', take_profit_price='55000',
+                stop_loss_price='48000', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            executor.view_conditional_orders()  # Should not raise
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_view_with_mixed_orders_shows_stats(self):
+        """Mixed orders should show summary stats."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-mix-1', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            tracker.save_bracket_order(BracketOrder(
+                order_id='br-mix-1', client_order_id='c-2',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                limit_price='55000', stop_trigger_price='48000',
+                status='ACTIVE', created_at='2026-01-02T12:00:00Z'
+            ))
+            executor.view_conditional_orders()  # Should not raise
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+
+# =============================================================================
+# Cancel Conditional Orders Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestCancelConditionalOrders:
+    """Tests for cancel_conditional_orders."""
+
+    def test_cancel_no_active_orders(self):
+        """No active orders should print info and return."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            executor.cancel_conditional_orders(lambda prompt: '')
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_cancel_single_order(self):
+        """Cancelling a single order should update status."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-cancel-1', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            # Register in mock API so cancel works
+            api.orders['sl-cancel-1'] = {
+                'order_id': 'sl-cancel-1', 'status': 'PENDING',
+                'product_id': 'BTC-USD', 'side': 'SELL'
+            }
+
+            inputs = iter(['1'])
+            executor.cancel_conditional_orders(lambda prompt: next(inputs))
+
+            loaded = tracker.get_stop_limit_order('sl-cancel-1')
+            assert loaded.status == 'CANCELLED'
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_cancel_all_orders(self):
+        """Cancelling 'all' should cancel all active orders."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            for i in range(2):
+                oid = f'sl-cancel-all-{i}'
+                tracker.save_stop_limit_order(StopLimitOrder(
+                    order_id=oid, client_order_id=f'c-{i}',
+                    product_id='BTC-USD', side='SELL', base_size='0.1',
+                    stop_price='48000', limit_price='47900',
+                    stop_direction='STOP_DIRECTION_STOP_DOWN',
+                    order_type='STOP_LOSS', status='PENDING',
+                    created_at=f'2026-01-0{i+1}T12:00:00Z'
+                ))
+                api.orders[oid] = {
+                    'order_id': oid, 'status': 'PENDING',
+                    'product_id': 'BTC-USD', 'side': 'SELL'
+                }
+
+            inputs = iter(['all'])
+            executor.cancel_conditional_orders(lambda prompt: next(inputs))
+
+            for i in range(2):
+                loaded = tracker.get_stop_limit_order(f'sl-cancel-all-{i}')
+                assert loaded.status == 'CANCELLED'
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+
+# =============================================================================
+# Sync Conditional Order Statuses Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestSyncConditionalStatuses:
+    """Tests for sync_conditional_order_statuses."""
+
+    def test_api_filled_updates_tracker(self):
+        """API status FILLED should update tracker."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-sync-1', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            # Set the API order status to FILLED
+            api.orders['sl-sync-1'] = {
+                'order_id': 'sl-sync-1', 'status': 'FILLED',
+                'product_id': 'BTC-USD', 'side': 'SELL'
+            }
+
+            executor.sync_conditional_order_statuses()
+
+            loaded = tracker.get_stop_limit_order('sl-sync-1')
+            assert loaded.status == 'FILLED'
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_missing_order_marked_cancelled(self):
+        """Order not in API response should be marked CANCELLED."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-sync-missing', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='PENDING',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+            # Don't add to api.orders — simulates order not found in API
+
+            executor.sync_conditional_order_statuses()
+
+            loaded = tracker.get_stop_limit_order('sl-sync-missing')
+            assert loaded.status == 'CANCELLED'
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_completed_orders_not_re_synced(self):
+        """Already-completed orders should not be re-synced."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            tracker.save_stop_limit_order(StopLimitOrder(
+                order_id='sl-sync-done', client_order_id='c-1',
+                product_id='BTC-USD', side='SELL', base_size='0.1',
+                stop_price='48000', limit_price='47900',
+                stop_direction='STOP_DIRECTION_STOP_DOWN',
+                order_type='STOP_LOSS', status='FILLED',
+                created_at='2026-01-01T12:00:00Z'
+            ))
+
+            executor.sync_conditional_order_statuses()
+
+            loaded = tracker.get_stop_limit_order('sl-sync-done')
+            assert loaded.status == 'FILLED'  # Should remain FILLED
+        finally:
+            shutil.rmtree(tracker_dir, ignore_errors=True)
+
+    def test_sync_handles_api_error(self):
+        """API error during sync should not crash."""
+        executor, api, md, tracker, tracker_dir = _make_conditional_executor()
+        try:
+            # Make list_orders raise
+            api.list_orders = Mock(side_effect=RuntimeError("API error"))
+
+            executor.sync_conditional_order_statuses()  # Should not raise
         finally:
             shutil.rmtree(tracker_dir, ignore_errors=True)
