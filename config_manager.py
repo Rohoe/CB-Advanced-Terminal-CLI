@@ -112,6 +112,26 @@ class TWAPConfig:
 
 
 @dataclass
+class VWAPConfig:
+    """
+    Configuration for VWAP orders.
+
+    Attributes:
+        default_lookback_hours: Default hours of historical data for volume profile.
+        default_granularity: Default candle granularity for volume profile.
+        benchmark_enabled: Whether to calculate and show benchmark VWAP.
+
+    Environment Variables:
+        VWAP_LOOKBACK_HOURS: Volume lookback hours (default: 24)
+        VWAP_GRANULARITY: Candle granularity (default: ONE_HOUR)
+        VWAP_BENCHMARK_ENABLED: Enable benchmark comparison (default: true)
+    """
+    default_lookback_hours: int = 24
+    default_granularity: str = "ONE_HOUR"
+    benchmark_enabled: bool = True
+
+
+@dataclass
 class RetryConfig:
     """
     Configuration for API call retry behavior.
@@ -205,6 +225,7 @@ class AppConfig:
         self.retry = self._load_retry_config()
         self.display = self._load_display_config()
         self.precision = PrecisionConfig()
+        self.vwap = self._load_vwap_config()
 
     def _load_rate_limit_config(self) -> RateLimitConfig:
         """Load rate limit configuration from environment."""
@@ -245,6 +266,14 @@ class AppConfig:
             max_retries=int(os.getenv('API_MAX_RETRIES', '3')),
             backoff_seconds=int(os.getenv('API_BACKOFF_SECONDS', '1')),
             max_backoff=int(os.getenv('API_MAX_BACKOFF', '30'))
+        )
+
+    def _load_vwap_config(self) -> VWAPConfig:
+        """Load VWAP configuration from environment."""
+        return VWAPConfig(
+            default_lookback_hours=int(os.getenv('VWAP_LOOKBACK_HOURS', '24')),
+            default_granularity=os.getenv('VWAP_GRANULARITY', 'ONE_HOUR'),
+            benchmark_enabled=os.getenv('VWAP_BENCHMARK_ENABLED', 'true').lower() == 'true'
         )
 
     def _load_display_config(self) -> DisplayConfig:
@@ -298,6 +327,11 @@ class AppConfig:
                 'table_columns': self.display.table_columns,
                 'table_width': self.display.table_width,
                 'markets_to_show': self.display.markets_to_show
+            },
+            'vwap': {
+                'default_lookback_hours': self.vwap.default_lookback_hours,
+                'default_granularity': self.vwap.default_granularity,
+                'benchmark_enabled': self.vwap.benchmark_enabled
             }
         }
 

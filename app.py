@@ -30,6 +30,7 @@ from twap_executor import TWAPExecutor
 from conditional_executor import ConditionalExecutor
 from display_service import DisplayService
 from scaled_executor import ScaledExecutor
+from vwap_executor import VWAPExecutor
 
 
 # Configure logging with both file and console output
@@ -249,6 +250,14 @@ class TradingTerminal:
             order_executor=self.order_executor,
             market_data=self.market_data,
             order_queue=self.order_queue,
+            config=self.config
+        )
+
+        # VWAPExecutor
+        self.vwap_executor = VWAPExecutor(
+            twap_executor=self.twap_executor,
+            market_data=self.market_data,
+            api_client=self.client,
             config=self.config
         )
 
@@ -599,6 +608,54 @@ class TradingTerminal:
         except Exception as e:
             logging.error(f"Error checking TWAP fills: {str(e)}")
             print("Error checking TWAP fills. Please check the logs for details.")
+
+    # ========================
+    # VWAP Order Delegation
+    # ========================
+
+    def place_vwap_order(self):
+        """Place a VWAP order."""
+        if not self.client:
+            print_warning("Please login first.")
+            return None
+        try:
+            def register_fn(twap_id, order_id):
+                with self.twap_lock:
+                    self.order_to_twap_map[order_id] = twap_id
+
+            return self.vwap_executor.place_vwap_order(self.get_input, register_fn=register_fn)
+        except CancelledException:
+            print_info("\nCancelled. Returning to main menu.")
+            return None
+
+    def view_vwap_fills(self):
+        """View VWAP execution summary."""
+        if not self.client:
+            print_warning("Please login first.")
+            return
+        try:
+            strategies = self.vwap_executor._strategies
+            if not strategies:
+                print_info("No VWAP orders in this session.")
+                return
+
+            print_header("\nVWAP Orders")
+            ids = list(strategies.keys())
+            for i, sid in enumerate(ids):
+                s = strategies[sid]
+                print(f"{i+1}. {sid[:8]}... - {s.product_id} {s.side} {s.total_size}")
+
+            num = self.get_input("Enter the number of the VWAP order to view")
+            try:
+                idx = int(num) - 1
+                if 0 <= idx < len(ids):
+                    self.vwap_executor.display_vwap_summary(ids[idx])
+                else:
+                    print_warning("Invalid number.")
+            except ValueError:
+                print_warning("Please enter a valid number.")
+        except CancelledException:
+            print_info("\nCancelled. Returning to main menu.")
 
     # ========================
     # Scaled Order Delegation
@@ -1040,9 +1097,11 @@ class TradingTerminal:
                 print("9. View TWAP fills")
                 print("10. Scaled/Ladder order")
                 print("11. View Scaled order fills")
+                print("12. VWAP order")
+                print("13. View VWAP fills")
 
                 try:
-                    choice = self.get_input("\nEnter your choice (1-11)")
+                    choice = self.get_input("\nEnter your choice (1-13)")
                 except CancelledException:
                     print_info("\nExiting application.")
                     break
@@ -1093,6 +1152,12 @@ class TradingTerminal:
                         print_success(f"Scaled order placed with ID: {highlight(scaled_id[:8])}...")
                 elif choice == '11':
                     self.view_scaled_order_fills()
+                elif choice == '12':
+                    vwap_id = self.place_vwap_order()
+                    if vwap_id:
+                        print_success(f"VWAP order completed: {highlight(vwap_id[:8])}...")
+                elif choice == '13':
+                    self.view_vwap_fills()
                 else:
                     print_warning("Invalid choice. Please try again.")
         except Exception as e:
