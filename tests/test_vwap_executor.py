@@ -116,3 +116,43 @@ class TestVWAPExecutor:
 
         assert result is not None
         assert result in executor._strategies
+
+    def test_display_vwap_summary_with_strategy(self, executor, mock_twap_executor):
+        """Display summary with a stored strategy."""
+        inputs = iter(['BUY', '50000', '1.0', '60', '5', '3', '24', 'yes'])
+        get_input = Mock(side_effect=inputs)
+
+        result = executor.place_vwap_order(get_input)
+        assert result is not None
+
+        # Should not raise
+        executor.display_vwap_summary(result)
+
+    def test_display_vwap_summary_by_strategy_instance(self, executor, mock_twap_executor):
+        """Display summary when passing strategy object directly."""
+        inputs = iter(['BUY', '50000', '1.0', '60', '5', '3', '24', 'yes'])
+        get_input = Mock(side_effect=inputs)
+
+        result = executor.place_vwap_order(get_input)
+        assert result is not None
+
+        strategy = executor._strategies[result]
+        executor.display_vwap_summary(strategy)  # Should not raise
+
+    def test_market_selection_returns_none(self, executor, mock_market_data):
+        """Should return None if market selection fails."""
+        mock_market_data.select_market.return_value = None
+        get_input = Mock(side_effect=['BUY', '50000', '1.0', '60', '5', '3', '24', 'yes'])
+
+        result = executor.place_vwap_order(get_input)
+        assert result is None
+
+    def test_execution_failure_returns_none(self, executor, mock_twap_executor):
+        """Should return None on execution failure."""
+        mock_twap_executor.execute_strategy.return_value = None
+
+        inputs = iter(['BUY', '50000', '1.0', '60', '5', '3', '24', 'yes'])
+        get_input = Mock(side_effect=inputs)
+
+        result = executor.place_vwap_order(get_input)
+        assert result is None
