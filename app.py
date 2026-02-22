@@ -355,13 +355,13 @@ class TradingTerminal:
 
     def place_twap_slice(self, twap_id, slice_number, total_slices, order_input, execution_price):
         """Place a single TWAP slice."""
-        return self.order_executor.place_twap_slice(
+        return self.twap_executor.place_twap_slice(
             twap_id, slice_number, total_slices, order_input, execution_price, self.twap_tracker
         )
 
     def update_twap_fills(self, twap_id):
         """Update fill information for a TWAP order."""
-        return self.order_executor.update_twap_fills(twap_id, self.twap_tracker)
+        return self.twap_executor.update_twap_fills(twap_id, self.twap_tracker)
 
     def get_order_input(self):
         """Get common order parameters from user input."""
@@ -369,7 +369,7 @@ class TradingTerminal:
 
     def get_conditional_order_input(self):
         """Get order input without limit price."""
-        return self.order_executor.get_conditional_order_input(self.get_input)
+        return self.conditional_executor.get_conditional_order_input(self.get_input)
 
     # ========================
     # Delegated Display Methods (backward compatibility)

@@ -1,8 +1,8 @@
 """
-Unit tests for OrderExecutor (order_executor.py).
+Unit tests for OrderExecutor (order_executor.py) and TWAPExecutor TWAP-specific methods.
 
 Tests cover limit order placement, TWAP slice rounding, min size enforcement,
-fee calculation, and user input gathering.
+fee calculation, user input gathering, and TWAP fill updates.
 
 To run:
     pytest tests/test_order_executor.py -v
@@ -10,8 +10,12 @@ To run:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from queue import Queue
 
 from order_executor import OrderExecutor, CancelledException
+from twap_executor import TWAPExecutor
+from conditional_executor import ConditionalExecutor
+from conditional_order_tracker import ConditionalOrderTracker
 from market_data import MarketDataService
 from config_manager import AppConfig
 from storage import InMemoryTWAPStorage
@@ -30,6 +34,39 @@ def _make_executor(api_client=None, config=None):
     rl = Mock(wait=Mock(return_value=None))
     md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
     return OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg), api, md
+
+
+def _make_twap_executor(api_client=None, config=None):
+    """Build a TWAPExecutor for TWAP-specific method tests."""
+    api = api_client or MockCoinbaseAPI()
+    cfg = config or AppConfig.for_testing()
+    rl = Mock(wait=Mock(return_value=None))
+    md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
+    oe = OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg)
+    storage = InMemoryTWAPStorage()
+    order_queue = Queue()
+    twap_exec = TWAPExecutor(
+        order_executor=oe, market_data=md, twap_storage=storage,
+        order_queue=order_queue, config=cfg
+    )
+    return twap_exec, api, md, storage
+
+
+def _make_conditional_executor(api_client=None, config=None):
+    """Build a ConditionalExecutor for conditional-specific method tests."""
+    api = api_client or MockCoinbaseAPI()
+    cfg = config or AppConfig.for_testing()
+    rl = Mock(wait=Mock(return_value=None))
+    md = MarketDataService(api_client=api, rate_limiter=rl, config=cfg)
+    oe = OrderExecutor(api_client=api, market_data=md, rate_limiter=rl, config=cfg)
+    import tempfile
+    tracker = ConditionalOrderTracker(base_dir=tempfile.mkdtemp())
+    order_queue = Queue()
+    cond_exec = ConditionalExecutor(
+        api_client=api, market_data=md, order_executor=oe,
+        conditional_tracker=tracker, order_queue=order_queue, config=cfg
+    )
+    return cond_exec, api, md
 
 
 # =============================================================================
@@ -123,10 +160,9 @@ class TestTWAPSliceRounding:
 
     def test_slice_size_rounded_to_product_increment(self):
         """TWAP slice size should be rounded according to product precision."""
-        executor, api, md = _make_executor()
+        twap_exec, api, md, storage = _make_twap_executor()
         api.set_account_balance('USDC', 1000000.0)
 
-        storage = InMemoryTWAPStorage()
         twap_order = TWAPOrder(
             twap_id='test-twap-1', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=3,
@@ -142,7 +178,7 @@ class TestTWAPSliceRounding:
             'limit_price': 50000.0
         }
 
-        order_id = executor.place_twap_slice(
+        order_id = twap_exec.place_twap_slice(
             twap_id='test-twap-1',
             slice_number=1,
             total_slices=3,
@@ -179,10 +215,9 @@ class TestMinSizeEnforcement:
 
     def test_twap_slice_adjusts_below_min_to_min(self):
         """TWAP slice below minimum should be adjusted up to minimum."""
-        executor, api, md = _make_executor()
+        twap_exec, api, md, storage = _make_twap_executor()
         api.set_account_balance('USDC', 1000000.0)
 
-        storage = InMemoryTWAPStorage()
         twap_order = TWAPOrder(
             twap_id='test-twap-min', market='BTC-USDC', side='BUY',
             total_size=0.0003, limit_price=50000.0, num_slices=10,
@@ -200,7 +235,7 @@ class TestMinSizeEnforcement:
 
         # slice_size = 0.0003 / 10 = 0.00003, below min 0.0001
         # Should be adjusted to min_size 0.0001
-        order_id = executor.place_twap_slice(
+        order_id = twap_exec.place_twap_slice(
             twap_id='test-twap-min',
             slice_number=1,
             total_slices=10,
@@ -330,7 +365,7 @@ class TestGetConditionalOrderInput:
 
     def test_successful_conditional_input(self):
         """Should return product_id, side, base_size (no limit_price)."""
-        executor, api, md = _make_executor()
+        cond_exec, api, md = _make_conditional_executor()
 
         with patch.object(md, 'select_market', return_value='BTC-USDC'), \
              patch.object(md, 'get_current_prices', return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}), \
@@ -339,7 +374,7 @@ class TestGetConditionalOrderInput:
             inputs = iter(['sell', '0.5'])
             get_input_fn = lambda prompt: next(inputs)
 
-            result = executor.get_conditional_order_input(get_input_fn)
+            result = cond_exec.get_conditional_order_input(get_input_fn)
 
         assert result is not None
         assert result['product_id'] == 'BTC-USDC'
@@ -349,10 +384,10 @@ class TestGetConditionalOrderInput:
 
     def test_returns_none_when_market_selection_fails(self):
         """Should return None if market selection returns None."""
-        executor, api, md = _make_executor()
+        cond_exec, api, md = _make_conditional_executor()
 
         with patch.object(md, 'select_market', return_value=None):
-            result = executor.get_conditional_order_input(lambda prompt: '')
+            result = cond_exec.get_conditional_order_input(lambda prompt: '')
 
         assert result is None
 
@@ -363,12 +398,11 @@ class TestGetConditionalOrderInput:
 
 @pytest.mark.unit
 class TestUpdateTWAPFills:
-    """Tests for update_twap_fills."""
+    """Tests for update_twap_fills (now on TWAPExecutor)."""
 
     def test_completed_status_when_fully_filled(self):
         """Should set status to 'completed' when all size is filled."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
         twap_order = TWAPOrder(
             twap_id='twap-fill-1', market='BTC-USDC', side='BUY',
             total_size=0.1, limit_price=50000.0, num_slices=1,
@@ -378,7 +412,7 @@ class TestUpdateTWAPFills:
         storage.save_twap_order(twap_order)
         api.simulate_fill('order-1', 0.1, 50000.0, is_maker=True)
 
-        result = executor.update_twap_fills('twap-fill-1', storage)
+        result = twap_exec.update_twap_fills('twap-fill-1', storage)
 
         assert result is True
         updated = storage.get_twap_order('twap-fill-1')
@@ -387,8 +421,7 @@ class TestUpdateTWAPFills:
 
     def test_partially_filled_status(self):
         """Should set status to 'partially_filled' when partially filled."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
         twap_order = TWAPOrder(
             twap_id='twap-fill-2', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=2,
@@ -398,7 +431,7 @@ class TestUpdateTWAPFills:
         storage.save_twap_order(twap_order)
         api.simulate_fill('order-1', 0.1, 50000.0, is_maker=True)
 
-        result = executor.update_twap_fills('twap-fill-2', storage)
+        result = twap_exec.update_twap_fills('twap-fill-2', storage)
 
         assert result is True
         updated = storage.get_twap_order('twap-fill-2')
@@ -406,8 +439,7 @@ class TestUpdateTWAPFills:
 
     def test_maker_taker_tracking(self):
         """Should track maker and taker order counts."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
         twap_order = TWAPOrder(
             twap_id='twap-fill-3', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=2,
@@ -418,7 +450,7 @@ class TestUpdateTWAPFills:
         api.simulate_fill('order-1', 0.1, 50000.0, is_maker=True)
         api.simulate_fill('order-2', 0.1, 50000.0, is_maker=False)
 
-        executor.update_twap_fills('twap-fill-3', storage)
+        twap_exec.update_twap_fills('twap-fill-3', storage)
 
         updated = storage.get_twap_order('twap-fill-3')
         # Note: mock fills use 'M'/'T' for liquidity_indicator, not 'MAKER'/'TAKER'
@@ -427,16 +459,14 @@ class TestUpdateTWAPFills:
 
     def test_nonexistent_order_returns_false(self):
         """Should return False for nonexistent TWAP order."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
 
-        result = executor.update_twap_fills('nonexistent', storage)
+        result = twap_exec.update_twap_fills('nonexistent', storage)
         assert result is False
 
     def test_no_fills_attribute_handled(self):
         """Should handle order response without fills attribute."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
         twap_order = TWAPOrder(
             twap_id='twap-fill-4', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=1,
@@ -446,15 +476,14 @@ class TestUpdateTWAPFills:
         storage.save_twap_order(twap_order)
         # Don't simulate any fills
 
-        result = executor.update_twap_fills('twap-fill-4', storage)
+        result = twap_exec.update_twap_fills('twap-fill-4', storage)
         assert result is True
         updated = storage.get_twap_order('twap-fill-4')
         assert updated.total_filled == 0.0
 
     def test_exception_in_single_order_continues(self):
         """Exception processing one order should not stop others."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
         twap_order = TWAPOrder(
             twap_id='twap-fill-5', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=2,
@@ -465,7 +494,7 @@ class TestUpdateTWAPFills:
         # bad-order will have no fills, order-good will have a fill
         api.simulate_fill('order-good', 0.1, 50000.0, is_maker=True)
 
-        result = executor.update_twap_fills('twap-fill-5', storage)
+        result = twap_exec.update_twap_fills('twap-fill-5', storage)
         assert result is True
 
 
@@ -479,10 +508,9 @@ class TestTWAPSliceEdgeCases:
 
     def test_last_slice_uses_remaining_quantity(self):
         """Last slice should use remaining quantity."""
-        executor, api, md = _make_executor()
+        twap_exec, api, md, storage = _make_twap_executor()
         api.set_account_balance('USDC', 1000000.0)
 
-        storage = InMemoryTWAPStorage()
         twap_order = TWAPOrder(
             twap_id='twap-last', market='BTC-USDC', side='BUY',
             total_size=1.0, limit_price=50000.0, num_slices=3,
@@ -496,7 +524,7 @@ class TestTWAPSliceEdgeCases:
             'base_size': 1.0, 'limit_price': 50000.0
         }
 
-        order_id = executor.place_twap_slice(
+        order_id = twap_exec.place_twap_slice(
             twap_id='twap-last', slice_number=3, total_slices=3,
             order_input=order_input, execution_price=50000.0,
             twap_tracker=storage
@@ -506,10 +534,9 @@ class TestTWAPSliceEdgeCases:
 
     def test_nonexistent_twap_order(self):
         """Should return None for nonexistent TWAP order."""
-        executor, api, md = _make_executor()
-        storage = InMemoryTWAPStorage()
+        twap_exec, api, md, storage = _make_twap_executor()
 
-        order_id = executor.place_twap_slice(
+        order_id = twap_exec.place_twap_slice(
             twap_id='nonexistent', slice_number=1, total_slices=3,
             order_input={'product_id': 'BTC-USDC', 'side': 'BUY',
                          'base_size': 1.0, 'limit_price': 50000.0},

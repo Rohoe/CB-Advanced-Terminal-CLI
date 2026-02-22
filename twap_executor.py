@@ -165,7 +165,7 @@ class TWAPExecutor:
 
             # Place the slice
             try:
-                order_id = self.order_executor.place_twap_slice(
+                order_id = self.place_twap_slice(
                     twap_order.twap_id, slice_number, num_slices,
                     order_input, execution_price, self.twap_tracker
                 )
@@ -281,7 +281,7 @@ class TWAPExecutor:
             # Final update
             twap_order.status = 'completed'
             self.twap_tracker.save_twap_order(twap_order)
-            self.order_executor.update_twap_fills(twap_id, self.twap_tracker)
+            self.update_twap_fills(twap_id, self.twap_tracker)
 
             logging.info(f"TWAP {twap_id} completed")
             return twap_id
@@ -371,7 +371,7 @@ class TWAPExecutor:
             # Final update
             twap_order.status = 'completed'
             self.twap_tracker.save_twap_order(twap_order)
-            self.order_executor.update_twap_fills(twap_id, self.twap_tracker)
+            self.update_twap_fills(twap_id, self.twap_tracker)
 
             logging.info(f"Strategy {twap_id} completed")
             return strategy.get_result()
@@ -383,6 +383,129 @@ class TWAPExecutor:
                 self.twap_tracker.save_twap_order(twap_order)
             return None
 
+    def place_twap_slice(self, twap_id, slice_number, total_slices, order_input, execution_price, twap_tracker):
+        """Place a single TWAP slice with comprehensive error handling."""
+        try:
+            twap_order = twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                logging.error(f"TWAP order {twap_id} not found")
+                return None
+
+            total_target = float(order_input["base_size"])
+            total_placed = sum(1 for _ in twap_order.orders)
+            remaining_quantity = total_target - total_placed
+
+            if slice_number == total_slices:
+                slice_size = remaining_quantity
+            else:
+                slice_size = total_target / total_slices
+
+            product_info = self.order_executor.api_client.get_product(order_input["product_id"])
+            min_size = float(product_info['base_min_size'])
+
+            rounded_size = self.market_data.round_size(slice_size, order_input["product_id"])
+            rounded_price = self.market_data.round_price(execution_price, order_input["product_id"])
+
+            if rounded_size < min_size:
+                logging.warning(f"Slice size {rounded_size} below minimum {min_size}. Adjusting.")
+                rounded_size = min_size
+
+            client_order_id = f"twap-{twap_id}-{slice_number}-{int(time.time())}"
+
+            order_response = self.order_executor.place_limit_order_with_retry(
+                product_id=order_input["product_id"],
+                side=order_input["side"],
+                base_size=str(rounded_size),
+                limit_price=str(rounded_price),
+                client_order_id=client_order_id
+            )
+
+            if not order_response:
+                return None
+
+            if isinstance(order_response, dict):
+                order_id = (order_response.get('success_response', {}).get('order_id') or
+                            order_response.get('order_id'))
+            else:
+                order_id = (getattr(order_response.success_response, 'order_id', None) if
+                            hasattr(order_response, 'success_response') else
+                            getattr(order_response, 'order_id', None))
+
+            if not order_id:
+                logging.error("Could not extract order ID from response")
+                return None
+
+            logging.info(f"Placed slice {slice_number}/{total_slices}: {order_id}")
+            return order_id
+
+        except Exception as e:
+            logging.error(f"Error placing TWAP slice: {str(e)}")
+            return None
+
+    def update_twap_fills(self, twap_id, twap_tracker):
+        """Update fill information for a TWAP order with fee calculations."""
+        from twap_tracker import OrderFill
+        try:
+            twap_order = twap_tracker.get_twap_order(twap_id)
+            if not twap_order:
+                return False
+
+            maker_rate, taker_rate = self.order_executor.get_fee_rates()
+            fills = []
+            total_filled = 0.0
+            total_value_filled = 0.0
+            total_fees = 0.0
+            maker_orders = 0
+            taker_orders = 0
+
+            for order_id in twap_order.orders:
+                try:
+                    self.order_executor.rate_limiter.wait()
+                    order_fills = self.order_executor.api_client.get_fills(order_ids=[order_id])
+                    if not hasattr(order_fills, 'fills'):
+                        continue
+                    for fill in order_fills.fills:
+                        is_maker = getattr(fill, 'liquidity_indicator', '') == 'MAKER'
+                        fill_size = float(fill.size)
+                        fill_price = float(fill.price)
+                        fill_value = fill_size * fill_price
+                        fee = fill_value * (maker_rate if is_maker else taker_rate)
+
+                        fills.append(OrderFill(
+                            order_id=fill.order_id, trade_id=fill.trade_id,
+                            filled_size=fill_size, price=fill_price,
+                            fee=fee, is_maker=is_maker, trade_time=fill.trade_time
+                        ))
+                        total_filled += fill_size
+                        total_value_filled += fill_value
+                        total_fees += fee
+                        if is_maker:
+                            maker_orders += 1
+                        else:
+                            taker_orders += 1
+                except Exception as e:
+                    logging.error(f"Error processing fills for order {order_id}: {str(e)}")
+                    continue
+
+            twap_tracker.save_twap_fills(twap_id, fills)
+            twap_order.total_filled = total_filled
+            twap_order.total_value_filled = total_value_filled
+            twap_order.total_fees = total_fees
+            twap_order.maker_orders = maker_orders
+            twap_order.taker_orders = taker_orders
+
+            if total_filled >= twap_order.total_size:
+                twap_order.status = 'completed'
+            elif total_filled > 0:
+                twap_order.status = 'partially_filled'
+
+            twap_tracker.save_twap_order(twap_order)
+            return True
+
+        except Exception as e:
+            logging.error(f"Error updating TWAP fills: {str(e)}")
+            return False
+
     def check_twap_order_fills(self, twap_id):
         """Check fills for a specific TWAP order."""
         try:
@@ -392,7 +515,7 @@ class TWAPExecutor:
                 return
 
             print(f"\nChecking fills for TWAP order {twap_id}...")
-            self.order_executor.update_twap_fills(twap_id, self.twap_tracker)
+            self.update_twap_fills(twap_id, self.twap_tracker)
         except Exception as e:
             logging.error(f"Error checking TWAP fills: {str(e)}")
             print("Error checking TWAP fills.")

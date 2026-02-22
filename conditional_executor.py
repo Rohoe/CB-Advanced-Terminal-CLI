@@ -35,13 +35,60 @@ class ConditionalExecutor:
         self.order_to_conditional_map = {}
         self.conditional_lock = Lock()
 
+    def get_conditional_order_input(self, get_input_fn):
+        """Get order input without limit price (for conditional orders)."""
+        from order_executor import CancelledException
+        try:
+            product_id = self.market_data.select_market(get_input_fn)
+            if not product_id:
+                return None
+
+            while True:
+                side = get_input_fn("\nEnter order side (buy/sell)").upper()
+                if side in ['BUY', 'SELL']:
+                    break
+                print("Invalid side. Please enter 'buy' or 'sell'.")
+
+            current_prices = self.market_data.get_current_prices(product_id)
+            if current_prices:
+                self.market_data.display_market_conditions(product_id, side, current_prices)
+
+            while True:
+                try:
+                    base_size = float(get_input_fn("\nEnter order size"))
+                    if base_size <= 0:
+                        print("Size must be greater than 0.")
+                        continue
+                    break
+                except ValueError:
+                    print("Please enter a valid number.")
+
+            product_info = self.api_client.get_product(product_id)
+            min_size = float(product_info['base_min_size'])
+            if base_size < min_size:
+                print(f"Error: Order size must be at least {min_size}")
+                return None
+
+            return {
+                "product_id": product_id,
+                "side": side,
+                "base_size": base_size
+            }
+
+        except CancelledException:
+            raise
+        except Exception as e:
+            logging.error(f"Error getting conditional order input: {str(e)}", exc_info=True)
+            print(f"Error getting conditional order input: {str(e)}")
+            return None
+
     def place_stop_loss_order(self, get_input_fn):
         """Place a stop-loss order using native Coinbase SDK."""
         try:
             print_header("Place Stop-Loss Order")
             print_info("This creates a NEW stop-loss order.")
 
-            order_input = self.order_executor.get_conditional_order_input(get_input_fn)
+            order_input = self.get_conditional_order_input(get_input_fn)
             if not order_input:
                 return None
 
@@ -145,7 +192,7 @@ class ConditionalExecutor:
         """Place a take-profit order."""
         try:
             print_header("Place Take-Profit Order")
-            order_input = self.order_executor.get_conditional_order_input(get_input_fn)
+            order_input = self.get_conditional_order_input(get_input_fn)
             if not order_input:
                 return None
 

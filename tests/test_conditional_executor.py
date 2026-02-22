@@ -66,7 +66,7 @@ class TestStopLossDirection:
 
         try:
             # Mock get_conditional_order_input to return SELL order
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'SELL', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
@@ -90,7 +90,7 @@ class TestStopLossDirection:
         api.set_account_balance('USDC', 100000.0)
 
         try:
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'BUY', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
@@ -113,7 +113,7 @@ class TestStopLossDirection:
         api.set_account_balance('BTC', 10.0)
 
         try:
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'SELL', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
@@ -145,7 +145,7 @@ class TestTakeProfitDirection:
         api.set_account_balance('BTC', 10.0)
 
         try:
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'SELL', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
@@ -167,7 +167,7 @@ class TestTakeProfitDirection:
         api.set_account_balance('USDC', 100000.0)
 
         try:
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'BUY', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
@@ -188,7 +188,7 @@ class TestTakeProfitDirection:
         executor, api, md, tracker, tracker_dir = _make_conditional_executor()
 
         try:
-            with patch.object(executor.order_executor, 'get_conditional_order_input',
+            with patch.object(executor, 'get_conditional_order_input',
                               return_value={'product_id': 'BTC-USDC', 'side': 'SELL', 'base_size': 0.1}), \
                  patch.object(md, 'get_current_prices',
                               return_value={'bid': 49995, 'mid': 50000, 'ask': 50005}):
