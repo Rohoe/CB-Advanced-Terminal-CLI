@@ -23,6 +23,11 @@ import random
 
 from api_client import APIClient
 
+
+class MockValidationError(Exception):
+    """Raised when strict_validation is enabled and a response fails schema validation."""
+    pass
+
 # Import schemas for validation (optional - logs warnings if validation fails)
 try:
     from tests.schemas.api_responses import (
@@ -64,8 +69,13 @@ class MockCoinbaseAPI(APIClient):
         assert len(orders.orders) == 1
     """
 
-    def __init__(self):
-        """Initialize mock API with default test data."""
+    def __init__(self, strict_validation: bool = False):
+        """Initialize mock API with default test data.
+
+        Args:
+            strict_validation: If True, raise MockValidationError on schema
+                              mismatch instead of just logging a warning.
+        """
         # In-memory storage
         self.accounts: Dict[str, Dict] = {}
         self.products: Dict[str, Dict] = {}
@@ -73,6 +83,7 @@ class MockCoinbaseAPI(APIClient):
         self.fills: Dict[str, List[Dict]] = {}
         self.order_books: Dict[str, Dict] = {}
         self.candles: Dict[str, List[Dict]] = {}
+        self.strict_validation = strict_validation
 
         # Setup default test data
         self._setup_default_data()
@@ -345,10 +356,13 @@ class MockCoinbaseAPI(APIClient):
             schema_class(**data)
             logging.debug(f"{method_name}: Response validation passed")
         except Exception as e:
-            logging.warning(
+            msg = (
                 f"{method_name}: Response validation failed - "
                 f"mock may not match real API structure. Error: {e}"
             )
+            if self.strict_validation:
+                raise MockValidationError(msg) from e
+            logging.warning(msg)
 
     # =========================================================================
     # APIClient Interface Implementation
@@ -383,7 +397,9 @@ class MockCoinbaseAPI(APIClient):
 
     def get_products(self) -> dict:
         """Get all available products."""
-        return {'products': list(self.products.values())}
+        data = {'products': list(self.products.values())}
+        self._validate_response(ProductsResponse, data, 'get_products')
+        return data
 
     def get_product_book(self, product_id: str, limit: int = 1) -> dict:
         """Get product order book."""
@@ -400,7 +416,9 @@ class MockCoinbaseAPI(APIClient):
             else:
                 raise ValueError(f"Product {product_id} not found")
 
-        return self.order_books[product_id]
+        book = self.order_books[product_id]
+        self._validate_response(ProductBook, book, 'get_product_book')
+        return book
 
     def limit_order_gtc(
         self,

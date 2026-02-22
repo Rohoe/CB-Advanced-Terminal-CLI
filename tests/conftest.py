@@ -585,6 +585,10 @@ def pytest_configure(config):
         "markers",
         "public_api: marks tests that use public Coinbase API endpoints (no auth required)"
     )
+    config.addinivalue_line(
+        "markers",
+        "authenticated: marks tests that require COINBASE_READONLY_KEY + COINBASE_READONLY_SECRET env vars"
+    )
 
 
 def pytest_collection_modifyitems(config, items):

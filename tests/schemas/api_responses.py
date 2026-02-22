@@ -71,7 +71,13 @@ class ProductBook(BaseModel):
     """Response from get_product_book() - pure dict."""
     model_config = ConfigDict(extra='allow')
 
-    pricebook: Dict[str, List[Dict[str, str]]]
+    pricebook: Dict[str, Any]
+    product_id: Optional[str] = None
+    time: Optional[str] = None
+    last: Optional[str] = None
+    mid_market: Optional[str] = None
+    spread_bps: Optional[str] = None
+    spread_absolute: Optional[str] = None
 
 
 # ============================================================================
