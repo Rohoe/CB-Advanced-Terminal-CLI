@@ -298,3 +298,58 @@ class TestBatchFillChecking:
 
         expected_avg = (0.5 * 50000.0 + 0.5 * 52000.0) / 1.0
         assert result['order-1']['average_price'] == pytest.approx(expected_avg)
+
+    def test_aggregates_multiple_fills_per_order(self):
+        """Multiple fills for same order should be aggregated."""
+        api = MockCoinbaseAPI()
+        api.simulate_fill('order-1', 0.1, 50000.0, is_maker=True)
+        api.simulate_fill('order-1', 0.2, 50100.0, is_maker=True)
+        api.simulate_fill('order-1', 0.3, 50200.0, is_maker=False)
+
+        svc = _make_service(api_client=api)
+        result = svc.check_order_fills_batch(['order-1'])
+
+        assert result['order-1']['filled_size'] == pytest.approx(0.6)
+
+    def test_api_exception_returns_empty(self):
+        """API exception should return empty dict."""
+        api = Mock()
+        api.get_fills.side_effect = RuntimeError("API error")
+
+        svc = _make_service(api_client=api)
+        result = svc.check_order_fills_batch(['order-1'])
+        assert result == {}
+
+
+# =============================================================================
+# Consolidated Markets Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestConsolidatedMarkets:
+    """Tests for get_consolidated_markets."""
+
+    def test_groups_usd_usdc_pairs(self):
+        """Should group BTC-USD and BTC-USDC under same base."""
+        api = MockCoinbaseAPI()
+        svc = _make_service(api_client=api)
+
+        # Returns (rows, headers, top_markets) tuple
+        rows, headers, top_markets = svc.get_consolidated_markets()
+
+        # MockCoinbaseAPI has BTC-USD, BTC-USDC, ETH-USD, SOL-USD
+        assert isinstance(top_markets, list)
+        # BTC should appear once (grouped from BTC-USD + BTC-USDC)
+        base_currencies = [base for base, _ in top_markets]
+        assert 'BTC' in base_currencies
+        assert base_currencies.count('BTC') == 1
+
+    def test_returns_products_from_api(self):
+        """Should return products from the API."""
+        api = MockCoinbaseAPI()
+        svc = _make_service(api_client=api)
+
+        rows, headers, top_markets = svc.get_consolidated_markets()
+        # Should have some markets (at least the 3 bases in MockCoinbaseAPI: BTC, ETH, SOL)
+        assert len(top_markets) > 0
+        assert len(headers) > 0

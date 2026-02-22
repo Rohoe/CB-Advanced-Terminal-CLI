@@ -340,3 +340,102 @@ class TestValidationError:
         assert error.field == "size"
         assert error.value == 0.001
         assert error.message == "Test"
+
+
+# =============================================================================
+# Price Range Validation Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestPriceRangeValidation:
+    """Tests for validate_price_range (scaled orders)."""
+
+    def test_valid_range(self):
+        low, high = InputValidator.validate_price_range(100.0, 200.0)
+        assert low == 100.0
+        assert high == 200.0
+
+    def test_low_equals_high_rejected(self):
+        with pytest.raises(ValidationError, match="must be less than"):
+            InputValidator.validate_price_range(100.0, 100.0)
+
+    def test_low_greater_than_high_rejected(self):
+        with pytest.raises(ValidationError, match="must be less than"):
+            InputValidator.validate_price_range(200.0, 100.0)
+
+    def test_negative_low_rejected(self):
+        with pytest.raises(ValidationError, match="greater than 0"):
+            InputValidator.validate_price_range(-10.0, 100.0)
+
+    def test_negative_high_rejected(self):
+        with pytest.raises(ValidationError, match="greater than 0"):
+            InputValidator.validate_price_range(10.0, -100.0)
+
+    def test_very_close_prices_accepted(self):
+        low, high = InputValidator.validate_price_range(100.0, 100.01)
+        assert low < high
+
+
+# =============================================================================
+# Num Orders Validation Tests
+# =============================================================================
+
+@pytest.mark.unit
+class TestNumOrdersValidation:
+    """Tests for validate_num_orders (scaled orders)."""
+
+    def test_valid_num_orders(self):
+        result = InputValidator.validate_num_orders(
+            num_orders=10, total_size=1.0, min_size=0.01
+        )
+        assert result == 10
+
+    def test_zero_rejected(self):
+        with pytest.raises(ValidationError, match="at least 1"):
+            InputValidator.validate_num_orders(
+                num_orders=0, total_size=1.0, min_size=0.01
+            )
+
+    def test_negative_rejected(self):
+        with pytest.raises(ValidationError, match="at least 1"):
+            InputValidator.validate_num_orders(
+                num_orders=-5, total_size=1.0, min_size=0.01
+            )
+
+    def test_exceeds_max_rejected(self):
+        with pytest.raises(ValidationError, match="cannot exceed"):
+            InputValidator.validate_num_orders(
+                num_orders=200, total_size=1.0, min_size=0.01, max_orders=100
+            )
+
+    def test_per_order_below_min_size(self):
+        with pytest.raises(ValidationError):
+            InputValidator.validate_num_orders(
+                num_orders=200, total_size=1.0, min_size=0.01
+            )
+
+    def test_invalid_type_rejected(self):
+        with pytest.raises(ValidationError, match="must be a valid integer"):
+            InputValidator.validate_num_orders(
+                num_orders="abc", total_size=1.0, min_size=0.01
+            )
+
+    def test_single_order_accepted(self):
+        result = InputValidator.validate_num_orders(
+            num_orders=1, total_size=1.0, min_size=0.01
+        )
+        assert result == 1
+
+    def test_error_suggests_max_valid(self):
+        try:
+            InputValidator.validate_num_orders(
+                num_orders=200, total_size=1.0, min_size=0.01
+            )
+        except ValidationError as e:
+            assert "100" in str(e)
+
+    def test_at_max_accepted(self):
+        result = InputValidator.validate_num_orders(
+            num_orders=100, total_size=1.0, min_size=0.01, max_orders=100
+        )
+        assert result == 100
