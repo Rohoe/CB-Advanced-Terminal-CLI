@@ -21,6 +21,7 @@ pytest                                    # All tests
 pytest --cov=. --cov-report=html          # With coverage
 pytest -m unit                            # Unit tests only
 pytest -m public_api                      # Public API tests (no auth needed)
+pytest -m authenticated                   # Authenticated conformance tests (needs .env keys)
 pytest -m "not public_api"                # Skip public API tests (offline)
 pytest -m sandbox                         # Sandbox tests (needs COINBASE_SANDBOX_MODE=true)
 pytest -m vcr                             # VCR replay tests (offline)
@@ -105,6 +106,7 @@ Testing uses `MockCoinbaseAPI` (in `tests/mocks/`) and `InMemoryTWAPStorage`.
 tests/
 ├── conftest.py                    # Shared fixtures
 ├── test_validators.py             # Input validation
+├── test_config.py                 # Config/credentials loading
 ├── test_rate_limiter.py           # Rate limiter
 ├── test_twap_tracker.py           # TWAP persistence
 ├── test_trading_terminal.py       # Terminal unit tests
@@ -112,6 +114,8 @@ tests/
 ├── test_market_data.py            # Market data module
 ├── test_order_executor.py         # Order executor
 ├── test_conditional_executor.py   # Conditional orders
+├── test_conditional_order_tracker.py # Conditional order tracker persistence
+├── test_storage.py                # Storage layer (file-based + in-memory)
 ├── test_twap_executor.py          # TWAP executor
 ├── test_twap_executor_enhanced.py # TWAP enhanced features
 ├── test_twap_strategy.py          # TWAP strategy
@@ -120,7 +124,10 @@ tests/
 ├── test_scaled_strategy.py        # Scaled strategy
 ├── test_vwap_executor.py          # VWAP executor
 ├── test_vwap_strategy.py          # VWAP strategy
+├── helpers/
+│   └── shape_compare.py           # Response shape comparison utility
 ├── integration/                   # Integration tests
+│   ├── test_mock_conformance.py   # Mock vs real API conformance (public + authenticated)
 │   ├── test_twap_execution.py     # TWAP with mocks
 │   ├── test_order_lifecycle.py    # Order lifecycle with mocks
 │   ├── test_portfolio_display.py  # Portfolio display with mocks
@@ -132,7 +139,7 @@ tests/
 │   ├── test_public_modules.py     # Modules wired to public API (no auth)
 │   └── test_vcr_recording.py      # VCR cassette recording/replay
 ├── mocks/
-│   └── mock_coinbase_api.py       # Mock API implementation
+│   └── mock_coinbase_api.py       # Mock API (supports strict_validation mode)
 ├── schemas/
 │   └── api_responses.py           # Pydantic response schemas
 └── vcr_cassettes/                 # Recorded API responses (YAML)
@@ -143,7 +150,12 @@ tests/
 - `terminal_with_mocks` — fully configured terminal for integration tests
 - `sandbox_client` — CoinbaseAPIClient pointed at sandbox (patches SDK auth gate)
 
-**Test Markers:** `unit`, `integration`, `slow`, `vcr`, `sandbox`, `public_api`
+**Test Markers:** `unit`, `integration`, `slow`, `vcr`, `sandbox`, `public_api`, `authenticated`
+
+**Mock Conformance Testing:**
+- `public_api` tests verify mock matches real public API response shapes (no auth needed, safe for CI)
+- `authenticated` tests verify mock matches authenticated API responses (requires `COINBASE_READONLY_KEY` + `COINBASE_READONLY_SECRET` in `.env`)
+- `MockCoinbaseAPI` supports `strict_validation=True` to raise on schema mismatches
 
 **Sandbox Limitations:** Only Accounts and Orders endpoints work. Products, candles, product book, and transaction summary return 404. Tests skip gracefully.
 
@@ -159,6 +171,7 @@ tests/
 
 **Environment Variables:**
 - `COINBASE_API_KEY` (required), `COINBASE_API_SECRET` (optional, will prompt)
+- `COINBASE_READONLY_KEY`, `COINBASE_READONLY_SECRET` — read-only key for authenticated conformance tests
 - `COINBASE_SANDBOX_MODE` — set `true` for sandbox
 - `RATE_LIMIT_RPS` (25), `RATE_LIMIT_BURST` (50)
 - `CACHE_ACCOUNT_TTL` (60)
