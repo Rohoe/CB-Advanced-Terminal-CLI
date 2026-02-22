@@ -18,6 +18,17 @@ from dataclasses import dataclass, field
 from typing import Dict, Any
 
 
+def _env(name: str, default, type_fn=str):
+    """Read an environment variable with type conversion.
+
+    For bools, accepts 'true'/'false' (case-insensitive).
+    """
+    raw = os.getenv(name, str(default))
+    if type_fn is bool:
+        return raw.lower() == 'true'
+    return type_fn(raw)
+
+
 @dataclass
 class RateLimitConfig:
     """
@@ -230,58 +241,58 @@ class AppConfig:
     def _load_rate_limit_config(self) -> RateLimitConfig:
         """Load rate limit configuration from environment."""
         return RateLimitConfig(
-            requests_per_second=int(os.getenv('RATE_LIMIT_RPS', '25')),
-            burst=int(os.getenv('RATE_LIMIT_BURST', '50'))
+            requests_per_second=_env('RATE_LIMIT_RPS', 25, int),
+            burst=_env('RATE_LIMIT_BURST', 50, int),
         )
 
     def _load_cache_config(self) -> CacheConfig:
         """Load cache configuration from environment."""
         return CacheConfig(
-            order_status_ttl=int(os.getenv('CACHE_ORDER_STATUS_TTL', '5')),
-            account_ttl=int(os.getenv('CACHE_ACCOUNT_TTL', '60')),
-            fill_ttl=int(os.getenv('CACHE_FILL_TTL', '5')),
-            product_ttl=int(os.getenv('CACHE_PRODUCT_TTL', '300'))
+            order_status_ttl=_env('CACHE_ORDER_STATUS_TTL', 5, int),
+            account_ttl=_env('CACHE_ACCOUNT_TTL', 60, int),
+            fill_ttl=_env('CACHE_FILL_TTL', 5, int),
+            product_ttl=_env('CACHE_PRODUCT_TTL', 300, int),
         )
 
     def _load_twap_config(self) -> TWAPConfig:
         """Load TWAP configuration from environment."""
         return TWAPConfig(
-            slice_delay=int(os.getenv('TWAP_SLICE_DELAY', '2')),
-            max_slices=int(os.getenv('TWAP_MAX_SLICES', '1000')),
-            max_duration_minutes=int(os.getenv('TWAP_MAX_DURATION', '1440')),
-            min_duration_minutes=int(os.getenv('TWAP_MIN_DURATION', '1')),
-            jitter_pct=float(os.getenv('TWAP_JITTER_PCT', '0.0')),
-            adaptive_enabled=os.getenv('TWAP_ADAPTIVE_ENABLED', 'false').lower() == 'true',
-            adaptive_timeout_seconds=int(os.getenv('TWAP_ADAPTIVE_TIMEOUT', '30')),
-            adaptive_max_retries=int(os.getenv('TWAP_ADAPTIVE_MAX_RETRIES', '3')),
-            participation_rate_cap=float(os.getenv('TWAP_PARTICIPATION_RATE_CAP', '0.0')),
-            volume_lookback_minutes=int(os.getenv('TWAP_VOLUME_LOOKBACK', '5')),
-            market_fallback_enabled=os.getenv('TWAP_MARKET_FALLBACK_ENABLED', 'false').lower() == 'true',
-            market_fallback_remaining_slices=int(os.getenv('TWAP_MARKET_FALLBACK_REMAINING_SLICES', '1'))
+            slice_delay=_env('TWAP_SLICE_DELAY', 2, int),
+            max_slices=_env('TWAP_MAX_SLICES', 1000, int),
+            max_duration_minutes=_env('TWAP_MAX_DURATION', 1440, int),
+            min_duration_minutes=_env('TWAP_MIN_DURATION', 1, int),
+            jitter_pct=_env('TWAP_JITTER_PCT', 0.0, float),
+            adaptive_enabled=_env('TWAP_ADAPTIVE_ENABLED', False, bool),
+            adaptive_timeout_seconds=_env('TWAP_ADAPTIVE_TIMEOUT', 30, int),
+            adaptive_max_retries=_env('TWAP_ADAPTIVE_MAX_RETRIES', 3, int),
+            participation_rate_cap=_env('TWAP_PARTICIPATION_RATE_CAP', 0.0, float),
+            volume_lookback_minutes=_env('TWAP_VOLUME_LOOKBACK', 5, int),
+            market_fallback_enabled=_env('TWAP_MARKET_FALLBACK_ENABLED', False, bool),
+            market_fallback_remaining_slices=_env('TWAP_MARKET_FALLBACK_REMAINING_SLICES', 1, int),
         )
 
     def _load_retry_config(self) -> RetryConfig:
         """Load retry configuration from environment."""
         return RetryConfig(
-            max_retries=int(os.getenv('API_MAX_RETRIES', '3')),
-            backoff_seconds=int(os.getenv('API_BACKOFF_SECONDS', '1')),
-            max_backoff=int(os.getenv('API_MAX_BACKOFF', '30'))
+            max_retries=_env('API_MAX_RETRIES', 3, int),
+            backoff_seconds=_env('API_BACKOFF_SECONDS', 1, int),
+            max_backoff=_env('API_MAX_BACKOFF', 30, int),
         )
 
     def _load_vwap_config(self) -> VWAPConfig:
         """Load VWAP configuration from environment."""
         return VWAPConfig(
-            default_lookback_hours=int(os.getenv('VWAP_LOOKBACK_HOURS', '24')),
-            default_granularity=os.getenv('VWAP_GRANULARITY', 'ONE_HOUR'),
-            benchmark_enabled=os.getenv('VWAP_BENCHMARK_ENABLED', 'true').lower() == 'true'
+            default_lookback_hours=_env('VWAP_LOOKBACK_HOURS', 24, int),
+            default_granularity=_env('VWAP_GRANULARITY', 'ONE_HOUR'),
+            benchmark_enabled=_env('VWAP_BENCHMARK_ENABLED', True, bool),
         )
 
     def _load_display_config(self) -> DisplayConfig:
         """Load display configuration from environment."""
         return DisplayConfig(
-            table_columns=int(os.getenv('DISPLAY_TABLE_COLUMNS', '4')),
-            table_width=int(os.getenv('DISPLAY_TABLE_WIDTH', '120')),
-            markets_to_show=int(os.getenv('DISPLAY_MARKETS', '20'))
+            table_columns=_env('DISPLAY_TABLE_COLUMNS', 4, int),
+            table_width=_env('DISPLAY_TABLE_WIDTH', 120, int),
+            markets_to_show=_env('DISPLAY_MARKETS', 20, int),
         )
 
     def to_dict(self) -> Dict[str, Any]:
