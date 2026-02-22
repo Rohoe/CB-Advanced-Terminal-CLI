@@ -9,5 +9,9 @@
 !sandbox_*.yaml
 !sandbox_*.yml
 
+# DO commit public endpoint cassettes (no auth, no sensitive data)
+!public_*.yaml
+!public_*.yml
+
 # Keep this directory in git
 !.gitignore

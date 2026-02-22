@@ -20,8 +20,8 @@ from tests.vcr_config import api_vcr
 
 
 # Skip if cassettes don't exist and sandbox mode not enabled
-def check_can_run():
-    """Check if we can run VCR tests (either cassettes exist or sandbox enabled)."""
+def check_sandbox_can_run():
+    """Check if sandbox VCR tests can run (cassettes exist or sandbox enabled)."""
     import os.path
     cassette_dir = 'tests/vcr_cassettes'
     has_cassettes = os.path.exists(f"{cassette_dir}/sandbox_get_accounts.yaml")
@@ -29,12 +29,13 @@ def check_can_run():
     return has_cassettes or sandbox_enabled
 
 
-pytestmark = pytest.mark.skipif(
-    not check_can_run(),
-    reason="VCR tests require either existing cassettes or COINBASE_SANDBOX_MODE=true"
+_skip_sandbox = pytest.mark.skipif(
+    not check_sandbox_can_run(),
+    reason="Sandbox VCR tests require either existing cassettes or COINBASE_SANDBOX_MODE=true"
 )
 
 
+@_skip_sandbox
 @pytest.mark.integration
 @pytest.mark.vcr
 class TestVCRRecording:
@@ -151,6 +152,7 @@ class TestVCRRecording:
             pytest.skip(f"Transaction summary not available in sandbox: {e}")
 
 
+@_skip_sandbox
 @pytest.mark.integration
 @pytest.mark.vcr
 class TestVCRRecordingNewEndpoints:
@@ -229,6 +231,66 @@ class TestVCRRecordingNewEndpoints:
 
 @pytest.mark.integration
 @pytest.mark.vcr
+@pytest.mark.public_api
+class TestVCRRecordingPublic:
+    """Record public API endpoint responses with VCR.py (no auth required)."""
+
+    @api_vcr.use_cassette('public_get_products.yaml')
+    def test_record_public_products(self, public_client):
+        """Record get_public_products response."""
+        response = public_client.get_public_products()
+
+        products = response.get('products', []) if isinstance(response, dict) else getattr(response, 'products', [])
+        assert len(products) > 0
+        print(f"Recorded/replayed {len(products)} public products")
+
+    @api_vcr.use_cassette('public_get_product.yaml')
+    def test_record_public_product(self, public_client):
+        """Record get_public_product response for BTC-USD."""
+        response = public_client.get_public_product('BTC-USD')
+
+        product_id = response.get('product_id') if isinstance(response, dict) else getattr(response, 'product_id', None)
+        assert product_id == 'BTC-USD'
+        print("Recorded/replayed public product BTC-USD")
+
+    @api_vcr.use_cassette('public_get_product_book.yaml')
+    def test_record_public_product_book(self, public_client):
+        """Record get_public_product_book response."""
+        response = public_client.get_public_product_book('BTC-USD', limit=5)
+
+        pricebook = response.get('pricebook') if isinstance(response, dict) else getattr(response, 'pricebook', None)
+        assert pricebook is not None
+        print("Recorded/replayed public product book")
+
+    @api_vcr.use_cassette('public_get_candles.yaml')
+    def test_record_public_candles(self, public_client):
+        """Record get_public_candles response."""
+        import time
+
+        end = str(int(time.time()))
+        start = str(int(time.time()) - 86400)
+
+        response = public_client.get_public_candles(
+            product_id='BTC-USD',
+            start=start,
+            end=end,
+            granularity='ONE_HOUR',
+        )
+
+        if isinstance(response, dict):
+            candles = response.get('candles', [])
+        elif hasattr(response, 'candles'):
+            candles = response.candles
+        else:
+            candles = list(response) if response else []
+
+        assert len(candles) > 0
+        print(f"Recorded/replayed {len(candles)} public candles")
+
+
+@_skip_sandbox
+@pytest.mark.integration
+@pytest.mark.vcr
 class TestVCRCassetteValidation:
     """Validate that VCR cassettes match our schemas."""
 
@@ -287,6 +349,7 @@ class TestVCRCassetteValidation:
             pytest.skip(f"Products not available in sandbox: {e}")
 
 
+@_skip_sandbox
 @pytest.mark.integration
 @pytest.mark.vcr
 class TestVCRReplaySpeed:

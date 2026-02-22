@@ -183,6 +183,8 @@ tests/
 │   ├── test_sandbox_modules.py      # Extracted modules vs sandbox API
 │   ├── test_scaled_execution.py     # Full scaled order flow (mock-based)
 │   ├── test_vwap_execution.py       # Full VWAP order flow (mock-based)
+│   ├── test_public_api.py           # Public endpoint response validation (no auth)
+│   ├── test_public_modules.py       # Modules wired to public API via adapter (no auth)
 │   └── test_vcr_recording.py        # VCR cassette recording/replay
 ├── mocks/                   # Mock implementations
 │   └── mock_coinbase_api.py
@@ -206,6 +208,7 @@ tests/
 - `@pytest.mark.slow`: Long-running tests
 - `@pytest.mark.vcr`: Uses VCR.py for API recording/replay
 - `@pytest.mark.sandbox`: Requires sandbox environment (`COINBASE_SANDBOX_MODE=true`)
+- `@pytest.mark.public_api`: Uses public Coinbase endpoints (no auth, no env vars needed)
 
 **Running integration tests:**
 ```bash
@@ -214,6 +217,12 @@ pytest tests/integration/test_scaled_execution.py tests/integration/test_vwap_ex
 
 # Sandbox tests (Coinbase sandbox — supports Accounts and Orders only)
 COINBASE_SANDBOX_MODE=true pytest -m sandbox -v
+
+# Public API tests (real production data, no auth/keys/env vars needed)
+pytest -m public_api -v
+
+# Skip public API tests (e.g., when offline)
+pytest -m "not public_api" -v
 
 # VCR replay tests (uses recorded cassettes, no network needed)
 pytest -m vcr -v

@@ -522,6 +522,30 @@ def sandbox_client():
 
 
 # =============================================================================
+# Public API Fixtures (No Authentication Required)
+# =============================================================================
+
+@pytest.fixture(scope="session")
+def public_client():
+    """
+    Unauthenticated client for public market data endpoints.
+
+    Uses Coinbase SDK's RESTClient with no credentials to access
+    public endpoints (get_public_products, get_public_product_book,
+    get_public_candles, etc.) against production.
+
+    No API keys, env vars, or sandbox mode required.
+
+    Session-scoped to reuse a single connection and avoid rate limiting.
+
+    Returns:
+        RESTClient: Unauthenticated client for public endpoints.
+    """
+    from coinbase.rest import RESTClient
+    return RESTClient(api_key=None, api_secret=None)
+
+
+# =============================================================================
 # Pytest Configuration Hooks
 # =============================================================================
 
@@ -556,6 +580,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "vcr: marks tests that use VCR.py for recording/replaying API calls"
+    )
+    config.addinivalue_line(
+        "markers",
+        "public_api: marks tests that use public Coinbase API endpoints (no auth required)"
     )
 
 

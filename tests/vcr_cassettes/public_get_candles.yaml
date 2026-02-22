@@ -1,0 +1,96 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      Cookie:
+      - __cf_bm=z8clfbkM2sVExSkFxknCSZoILe5g3LFPcXpSAFpSfy0-1771737745-1.0.1.1-mX.ukoCUziD.eMNwlMzU3EMGhDh6FND4xoHpSZ1p8ObBLfLJrI6b22416gqnlQ8wD5wj7bXF.fKkUXDkE3EKa64v3i25_sWNHAKui_2pa2E;
+        _cfuvid=yXGq02PXMGqziqF3iz01DB.x..pTIpxnOHBbCQitWng-1771737745492-0.0.1.1-604800000;
+        cb_dm=13df2edf-a4b8-44ef-a937-0cdc225c1c97
+      User-Agent:
+      - coinbase-advanced-py/1.8.2
+    method: GET
+    uri: https://api.coinbase.com/api/v3/brokerage/market/products/BTC-USD/candles?start=1771651345&end=1771737745&granularity=ONE_HOUR
+  response:
+    body:
+      string: '{"candles":[{"start":"1771736400","low":"67863.77","high":"67995.62","open":"67959.11","close":"67921.53","volume":"50.67386121"},{"start":"1771732800","low":"67929.22","high":"68063.58","open":"68025.88","close":"67959.11","volume":"97.31556303"},{"start":"1771729200","low":"67802.78","high":"68044.75","open":"67889.59","close":"68024.46","volume":"136.55583046"},{"start":"1771725600","low":"67852.71","high":"68200","open":"68138.97","close":"67889.59","volume":"181.19585209"},{"start":"1771722000","low":"67908","high":"68153.57","open":"67920.31","close":"68138.97","volume":"112.98320765"},{"start":"1771718400","low":"67778.48","high":"68072.72","open":"67955.78","close":"67920.32","volume":"149.13421138"},{"start":"1771714800","low":"67926.18","high":"68108.82","open":"67958.09","close":"67955.78","volume":"109.73832542"},{"start":"1771711200","low":"67865","high":"68450.94","open":"68368.94","close":"67961.79","volume":"216.01716682"},{"start":"1771707600","low":"68166.01","high":"68380.73","open":"68199.98","close":"68368.94","volume":"139.99881123"},{"start":"1771704000","low":"68170.15","high":"68587.61","open":"68533.24","close":"68199.99","volume":"162.20238863"},{"start":"1771700400","low":"68510.79","high":"68647.42","open":"68564.98","close":"68533.24","volume":"110.32584084"},{"start":"1771696800","low":"68367.61","high":"68627","open":"68388.06","close":"68564.99","volume":"200.28145042"},{"start":"1771693200","low":"68185.06","high":"68457.68","open":"68314.78","close":"68425.5","volume":"188.90826931"},{"start":"1771689600","low":"68080","high":"68620.5","open":"68595.16","close":"68313.43","volume":"273.62089098"},{"start":"1771686000","low":"68389.06","high":"68683.27","open":"68427.97","close":"68595.16","volume":"166.44533738"},{"start":"1771682400","low":"68161.61","high":"68608.01","open":"68238.51","close":"68427.97","volume":"253.52944261"},{"start":"1771678800","low":"68074.8","high":"68249.99","open":"68191.77","close":"68238.51","volume":"83.75939006"},{"start":"1771675200","low":"67894.6","high":"68201","open":"68076.47","close":"68191.77","volume":"108.31362992"},{"start":"1771671600","low":"68058","high":"68265.57","open":"68199.97","close":"68076.47","volume":"75.64179277"},{"start":"1771668000","low":"68120.13","high":"68225.68","open":"68126.28","close":"68199.99","volume":"59.33172867"},{"start":"1771664400","low":"67954.26","high":"68285","open":"68035.18","close":"68126.28","volume":"131.45241252"},{"start":"1771660800","low":"67790","high":"68071.1","open":"67835.99","close":"68035.18","volume":"106.58913993"},{"start":"1771657200","low":"67730.2","high":"67867.54","open":"67771.19","close":"67835.99","volume":"49.49252099"},{"start":"1771653600","low":"67735.59","high":"67903.17","open":"67841.33","close":"67771.19","volume":"54.2012956"}]}'
+    headers:
+      CF-Cache-Status:
+      - MISS
+      CF-RAY:
+      - 9d1c0baf3de87d1c-EWR
+      Cache-Control:
+      - public, max-age=14400
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 05:22:25 GMT
+      Expires:
+      - Sun, 22 Feb 2026 09:22:25 GMT
+      Last-Modified:
+      - Sun, 22 Feb 2026 05:22:25 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=q7b46%2Bo9wE%2Bo9BHOLEIR7L0nlzdwgr10EEzilEDsAW8o7x4poZmWvSxmb8ZeBqaSYRq4qreyBCM%2FKLGmeDnEeNcHmmqwi7pZgEjIlp5tS%2FnpdMxy%2BAWmnpojO2B8B7XxsvQ%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-headers:
+      - Authorization, Content-Type, Accept, Second-Factor-Proof-Token, Client-Id,
+        Access-Token, X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid,
+        X-Cb-Pagekey, X-Cb-UJS, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name,Content-Type,
+        Accept, Second-Factor-Proof-Token, Itp-Resource-Id-User_uuid, Client-Id, Access-Token,
+        X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid, X-Cb-Pagekey,
+        X-Cb-Ujs, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name, X-Datadog-Parent-Id,
+        X-Datadog-Trace-Id, X-Datadog-Origin, X-Datadog-Sampling-Priority, Itp-Resource-Id-X-Cb-Unmask
+      access-control-allow-methods:
+      - GET,POST,DELETE,PUT,GET,POST,DELETE,PUT,PATCH
+      access-control-allow-private-network:
+      - true,true
+      access-control-expose-headers:
+      - ''
+      access-control-max-age:
+      - 7200,7200
+      content-length:
+      - '2828'
+      cross-origin-opener-policy:
+      - same-origin
+      permissions-policy:
+      - camera=(), microphone=()
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      trace-id:
+      - '4378388411716172125'
+      - '4378388411716172125'
+      vary:
+      - Origin,Origin, Accept-Encoding
+      x-content-type-options:
+      - nosniff
+      x-dns-prefetch-control:
+      - 'off'
+      - 'off'
+      x-download-options:
+      - noopen
+      - noopen
+      x-frame-options:
+      - SAMEORIGIN
+      - SAMEORIGIN
+      x-xss-protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

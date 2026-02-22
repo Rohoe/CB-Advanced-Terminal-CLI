@@ -1,0 +1,98 @@
+interactions:
+- request:
+    body: '{}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '2'
+      Content-Type:
+      - application/json
+      Cookie:
+      - __cf_bm=z8clfbkM2sVExSkFxknCSZoILe5g3LFPcXpSAFpSfy0-1771737745-1.0.1.1-mX.ukoCUziD.eMNwlMzU3EMGhDh6FND4xoHpSZ1p8ObBLfLJrI6b22416gqnlQ8wD5wj7bXF.fKkUXDkE3EKa64v3i25_sWNHAKui_2pa2E;
+        _cfuvid=yXGq02PXMGqziqF3iz01DB.x..pTIpxnOHBbCQitWng-1771737745492-0.0.1.1-604800000;
+        cb_dm=13df2edf-a4b8-44ef-a937-0cdc225c1c97
+      User-Agent:
+      - coinbase-advanced-py/1.8.2
+    method: GET
+    uri: https://api.coinbase.com/api/v3/brokerage/market/product_book?product_id=BTC-USD&limit=5
+  response:
+    body:
+      string: '{"pricebook":{"product_id":"BTC-USD","bids":[{"price":"67921.52","size":"0.27645558"},{"price":"67920.79","size":"0.01689612"},{"price":"67920.5","size":"0.02210488"},{"price":"67920.31","size":"0.00000588"},{"price":"67920.16","size":"0.00294457"}],"asks":[{"price":"67921.53","size":"0.05022721"},{"price":"67922.55","size":"0.02208398"},{"price":"67922.89","size":"0.08294457"},{"price":"67923.99","size":"0.0029446"},{"price":"67924.09","size":"0.000017"}],"time":"2026-02-22T05:22:23.715993Z"},"last":"67921.525","mid_market":"67921.525","spread_bps":"0.001472287211","spread_absolute":"0.01"}'
+    headers:
+      Age:
+      - '1'
+      CF-Cache-Status:
+      - HIT
+      CF-RAY:
+      - 9d1c0baebe433453-EWR
+      Cache-Control:
+      - public, max-age=14400
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 22 Feb 2026 05:22:25 GMT
+      Expires:
+      - Sun, 22 Feb 2026 09:22:25 GMT
+      Last-Modified:
+      - Sun, 22 Feb 2026 05:22:24 GMT
+      NEL:
+      - '{"success_fraction":0.01,"report_to":"cf-nel","max_age":604800}'
+      Report-To:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=apdeZZVIW7lqlIZQ0S5V%2Bl7vupQkgUV1%2FntBqDHkssNgu%2BHl4501xIH6xOBbSNvoMW%2Bsct5N2M%2FLlehB9af9gGW6NZs50SE%2FsmER866b%2FCQUzl7JOVOlg25z7uT7xBdmsB4%3D"}],"group":"cf-nel","max_age":604800}'
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-headers:
+      - Authorization, Content-Type, Accept, Second-Factor-Proof-Token, Client-Id,
+        Access-Token, X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid,
+        X-Cb-Pagekey, X-Cb-UJS, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name,Content-Type,
+        Accept, Second-Factor-Proof-Token, Itp-Resource-Id-User_uuid, Client-Id, Access-Token,
+        X-Cb-Project-Name, X-Cb-Is-Logged-In, X-Cb-Platform, X-Cb-Session-Uuid, X-Cb-Pagekey,
+        X-Cb-Ujs, Fingerprint-Tokens, X-Cb-Device-Id, X-Cb-Version-Name, X-Datadog-Parent-Id,
+        X-Datadog-Trace-Id, X-Datadog-Origin, X-Datadog-Sampling-Priority, Itp-Resource-Id-X-Cb-Unmask
+      access-control-allow-methods:
+      - GET,POST,DELETE,PUT,GET,POST,DELETE,PUT,PATCH
+      access-control-allow-private-network:
+      - true,true
+      access-control-expose-headers:
+      - ''
+      access-control-max-age:
+      - 7200,7200
+      content-length:
+      - '598'
+      cross-origin-opener-policy:
+      - same-origin
+      permissions-policy:
+      - camera=(), microphone=()
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      trace-id:
+      - '567562723356908943'
+      - '567562723356908943'
+      vary:
+      - Origin,Origin, Accept-Encoding
+      x-content-type-options:
+      - nosniff
+      x-dns-prefetch-control:
+      - 'off'
+      - 'off'
+      x-download-options:
+      - noopen
+      - noopen
+      x-frame-options:
+      - SAMEORIGIN
+      - SAMEORIGIN
+      x-xss-protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1
