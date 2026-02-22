@@ -277,6 +277,53 @@ class APIClient(ABC):
         pass
 
     @abstractmethod
+    def get_candles(
+        self,
+        product_id: str,
+        start: str,
+        end: str,
+        granularity: str
+    ) -> Any:
+        """
+        Get historical candle data for a product.
+
+        Args:
+            product_id: Product identifier (e.g., 'BTC-USD').
+            start: Start time as unix timestamp string.
+            end: End time as unix timestamp string.
+            granularity: Candle granularity. Options:
+                ONE_MINUTE, FIVE_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE,
+                ONE_HOUR, TWO_HOUR, SIX_HOUR, ONE_DAY
+
+        Returns:
+            Response with 'candles' list, each containing:
+            start, low, high, open, close, volume
+        """
+        pass
+
+    @abstractmethod
+    def market_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str
+    ) -> Any:
+        """
+        Place a market order.
+
+        Args:
+            client_order_id: Client-generated order ID for idempotency.
+            product_id: Product identifier.
+            side: Order side ('BUY' or 'SELL').
+            base_size: Order size in base currency (as string).
+
+        Returns:
+            Response object with order details or error information.
+        """
+        pass
+
+    @abstractmethod
     def create_order(
         self,
         client_order_id: str,
@@ -467,6 +514,41 @@ class CoinbaseAPIClient(APIClient):
             limit_price=limit_price,
             stop_price=stop_price,
             stop_direction=stop_direction
+        )
+
+    def get_candles(
+        self,
+        product_id: str,
+        start: str,
+        end: str,
+        granularity: str
+    ) -> Any:
+        """Get historical candle data for a product."""
+        return self._client.get_candles(
+            product_id=product_id,
+            start=start,
+            end=end,
+            granularity=granularity
+        )
+
+    def market_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str
+    ) -> Any:
+        """Place a market order."""
+        order_configuration = {
+            "market_market_ioc": {
+                "base_size": base_size
+            }
+        }
+        return self._client.create_order(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            side=side,
+            order_configuration=order_configuration
         )
 
     def trigger_bracket_order_gtc(

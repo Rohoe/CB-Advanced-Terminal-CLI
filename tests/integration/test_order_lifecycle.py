@@ -61,7 +61,7 @@ class TestOrderLifecycle:
         mock_api_client.get_fills.return_value = Mock(fills=[mock_fill])
 
         # ACT - Place order
-        with patch.object(terminal, 'get_account_balance', return_value=10000.0):
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=10000.0):
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',
                 side='BUY',
@@ -169,7 +169,7 @@ class TestOrderLifecycle:
         mock_api_client.get_product.return_value = mock_product
 
         # Mock account balance
-        with patch.object(terminal, 'get_account_balance', return_value=100000.0):
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=100000.0):
             # ACT - Try to place order below minimum
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',
@@ -210,7 +210,7 @@ class TestOrderLifecycle:
         mock_api_client.limit_order_gtc.side_effect = Exception("API error")
 
         # ACT - Place order that will fail
-        with patch.object(terminal, 'get_account_balance', return_value=10000.0):
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=10000.0):
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',
                 side='BUY',

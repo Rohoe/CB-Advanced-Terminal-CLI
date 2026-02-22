@@ -18,6 +18,8 @@ Usage:
 from typing import List, Optional, Any, Dict
 from unittest.mock import Mock
 import logging
+import math
+import random
 
 from api_client import APIClient
 
@@ -70,6 +72,7 @@ class MockCoinbaseAPI(APIClient):
         self.orders: Dict[str, Dict] = {}
         self.fills: Dict[str, List[Dict]] = {}
         self.order_books: Dict[str, Dict] = {}
+        self.candles: Dict[str, List[Dict]] = {}
 
         # Setup default test data
         self._setup_default_data()
@@ -222,6 +225,103 @@ class MockCoinbaseAPI(APIClient):
         if order_id in self.orders:
             self.orders[order_id]['status'] = 'FILLED'
 
+    def set_candles(self, product_id: str, candles: List[Dict]):
+        """
+        Set candle data for a product.
+
+        Args:
+            product_id: Product identifier.
+            candles: List of candle dicts with keys: start, low, high, open, close, volume.
+        """
+        self.candles[product_id] = candles
+
+    def generate_candles(
+        self,
+        product_id: str,
+        hours: int = 24,
+        granularity: str = "ONE_HOUR",
+        base_price: Optional[float] = None,
+        seed: Optional[int] = None
+    ) -> List[Dict]:
+        """
+        Generate realistic OHLCV candle data with U-shaped volume profile.
+
+        The volume profile follows a U-shape: high volume at market open/close
+        hours, lower volume in the middle of the day.
+
+        Args:
+            product_id: Product identifier.
+            hours: Number of hours of data to generate.
+            granularity: Candle granularity (determines count).
+            base_price: Starting price (defaults to product price).
+            seed: Random seed for reproducibility.
+
+        Returns:
+            List of candle dicts.
+        """
+        if seed is not None:
+            rng = random.Random(seed)
+        else:
+            rng = random.Random()
+
+        if base_price is None:
+            if product_id in self.products:
+                base_price = float(self.products[product_id]['price'])
+            else:
+                base_price = 50000.0
+
+        # Determine candle count based on granularity
+        granularity_minutes = {
+            'ONE_MINUTE': 1,
+            'FIVE_MINUTE': 5,
+            'FIFTEEN_MINUTE': 15,
+            'THIRTY_MINUTE': 30,
+            'ONE_HOUR': 60,
+            'TWO_HOUR': 120,
+            'SIX_HOUR': 360,
+            'ONE_DAY': 1440,
+        }
+        minutes_per_candle = granularity_minutes.get(granularity, 60)
+        num_candles = (hours * 60) // minutes_per_candle
+
+        candles = []
+        current_price = base_price
+        base_volume = 100.0
+        import time as _time
+        end_ts = int(_time.time())
+        start_ts = end_ts - (hours * 3600)
+
+        for i in range(num_candles):
+            candle_start = start_ts + (i * minutes_per_candle * 60)
+
+            # U-shaped volume: higher at edges, lower in middle
+            position = i / max(num_candles - 1, 1)  # 0 to 1
+            u_factor = 1.0 + 2.0 * (2.0 * (position - 0.5)) ** 2
+            volume = base_volume * u_factor * (0.8 + rng.random() * 0.4)
+
+            # Price movement: small random walk
+            change_pct = rng.gauss(0, 0.005)  # ~0.5% std dev
+            open_price = current_price
+            close_price = open_price * (1 + change_pct)
+
+            # High/low within the candle
+            high = max(open_price, close_price) * (1 + abs(rng.gauss(0, 0.002)))
+            low = min(open_price, close_price) * (1 - abs(rng.gauss(0, 0.002)))
+
+            candles.append({
+                'start': str(candle_start),
+                'open': str(round(open_price, 2)),
+                'high': str(round(high, 2)),
+                'low': str(round(low, 2)),
+                'close': str(round(close_price, 2)),
+                'volume': str(round(volume, 4)),
+            })
+
+            current_price = close_price
+
+        self.candles[product_id] = candles
+        return candles
+
     # =========================================================================
     # Schema Validation Helper
     # =========================================================================
@@ -372,6 +472,187 @@ class MockCoinbaseAPI(APIClient):
             }
         )
 
+    def stop_limit_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a stop-limit order."""
+        order_id = f"mock-sl-order-{len(self.orders) + 1}"
+        self.orders[order_id] = {
+            'order_id': order_id,
+            'client_order_id': client_order_id,
+            'product_id': product_id,
+            'side': side,
+            'base_size': base_size,
+            'limit_price': limit_price,
+            'stop_price': stop_price,
+            'stop_direction': stop_direction,
+            'status': 'PENDING',
+            'created_time': '2025-01-01T00:00:00Z'
+        }
+        return Mock(
+            success=True,
+            success_response={'order_id': order_id},
+            error_response=None
+        )
+
+    def stop_limit_order_gtc_buy(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a BUY stop-limit order."""
+        return self.stop_limit_order_gtc(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            side='BUY',
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            stop_direction=stop_direction
+        )
+
+    def stop_limit_order_gtc_sell(
+        self,
+        client_order_id: str,
+        product_id: str,
+        base_size: str,
+        limit_price: str,
+        stop_price: str,
+        stop_direction: str
+    ) -> Any:
+        """Place a SELL stop-limit order."""
+        return self.stop_limit_order_gtc(
+            client_order_id=client_order_id,
+            product_id=product_id,
+            side='SELL',
+            base_size=base_size,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            stop_direction=stop_direction
+        )
+
+    def trigger_bracket_order_gtc(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str,
+        limit_price: str,
+        stop_trigger_price: str
+    ) -> Any:
+        """Place a bracket order."""
+        order_id = f"mock-bracket-{len(self.orders) + 1}"
+        self.orders[order_id] = {
+            'order_id': order_id,
+            'client_order_id': client_order_id,
+            'product_id': product_id,
+            'side': side,
+            'base_size': base_size,
+            'limit_price': limit_price,
+            'stop_trigger_price': stop_trigger_price,
+            'status': 'ACTIVE',
+            'created_time': '2025-01-01T00:00:00Z'
+        }
+        return Mock(
+            success=True,
+            success_response={'order_id': order_id},
+            error_response=None
+        )
+
+    def create_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        order_configuration: dict,
+        attached_order_configuration: Optional[dict] = None
+    ) -> Any:
+        """Generic order creation."""
+        order_id = f"mock-generic-{len(self.orders) + 1}"
+        self.orders[order_id] = {
+            'order_id': order_id,
+            'client_order_id': client_order_id,
+            'product_id': product_id,
+            'side': side,
+            'order_configuration': order_configuration,
+            'attached_order_configuration': attached_order_configuration,
+            'status': 'OPEN',
+            'created_time': '2025-01-01T00:00:00Z'
+        }
+        return Mock(
+            success=True,
+            success_response={'order_id': order_id},
+            error_response=None
+        )
+
+    def get_candles(
+        self,
+        product_id: str,
+        start: str,
+        end: str,
+        granularity: str
+    ) -> Any:
+        """Get historical candle data."""
+        candles = self.candles.get(product_id, [])
+
+        # Filter by time range if candles exist
+        filtered = []
+        for candle in candles:
+            candle_start = int(candle['start'])
+            if int(start) <= candle_start <= int(end):
+                filtered.append(candle)
+
+        if not filtered:
+            filtered = candles  # Return all if no time filter matches
+
+        return Mock(candles=[Mock(**c) for c in filtered])
+
+    def market_order(
+        self,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        base_size: str
+    ) -> Any:
+        """Place a market order."""
+        order_id = f"mock-market-order-{len(self.orders) + 1}"
+
+        # Get current price for market order
+        price = '0'
+        if product_id in self.products:
+            price = self.products[product_id]['price']
+
+        self.orders[order_id] = {
+            'order_id': order_id,
+            'client_order_id': client_order_id,
+            'product_id': product_id,
+            'side': side,
+            'base_size': base_size,
+            'status': 'FILLED',  # Market orders fill immediately
+            'created_time': '2025-01-01T00:00:00Z',
+            'order_type': 'MARKET'
+        }
+
+        # Auto-simulate fill for market order
+        self.simulate_fill(order_id, float(base_size), float(price), is_maker=False)
+
+        return Mock(
+            success=True,
+            success_response=Mock(order_id=order_id),
+            to_dict=lambda: {'success_response': {'order_id': order_id}}
+        )
+
     # =========================================================================
     # Test Utility Methods
     # =========================================================================
@@ -383,6 +664,7 @@ class MockCoinbaseAPI(APIClient):
         self.orders.clear()
         self.fills.clear()
         self.order_books.clear()
+        self.candles.clear()
         self._setup_default_data()
         logging.debug("MockCoinbaseAPI reset to initial state")
 

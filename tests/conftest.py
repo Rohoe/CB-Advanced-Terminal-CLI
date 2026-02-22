@@ -228,6 +228,44 @@ def sample_order_fills():
     ]
 
 
+@pytest.fixture
+def sample_candle_data():
+    """
+    Create sample candle data (24h of hourly candles) for testing.
+
+    Returns:
+        List of candle dicts with OHLCV data.
+    """
+    import time
+
+    base_price = 50000.0
+    candles = []
+    end_ts = int(time.time())
+    start_ts = end_ts - (24 * 3600)
+
+    for i in range(24):
+        candle_start = start_ts + (i * 3600)
+        # U-shaped volume profile
+        position = i / 23.0
+        u_factor = 1.0 + 2.0 * (2.0 * (position - 0.5)) ** 2
+        volume = 100.0 * u_factor
+
+        price_offset = (i - 12) * 10  # Simple linear price movement
+        open_price = base_price + price_offset
+        close_price = open_price + 5
+
+        candles.append({
+            'start': str(candle_start),
+            'open': str(round(open_price, 2)),
+            'high': str(round(max(open_price, close_price) + 20, 2)),
+            'low': str(round(min(open_price, close_price) - 20, 2)),
+            'close': str(round(close_price, 2)),
+            'volume': str(round(volume, 4)),
+        })
+
+    return candles
+
+
 # =============================================================================
 # Configuration Fixtures
 # =============================================================================

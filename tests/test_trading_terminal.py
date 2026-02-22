@@ -248,21 +248,14 @@ class TestBalanceValidation:
 
     def test_insufficient_balance_buy_order(self, mock_api_client, test_app_config):
         """Test that buy orders fail with insufficient quote currency balance."""
-        # Mock product
-        mock_product = Mock()
-        mock_product.base_min_size = '0.0001'
-        mock_product.base_max_size = '10000'
-        mock_product.quote_increment = '0.01'
-        mock_api_client.get_product.return_value = mock_product
-
         terminal = TradingTerminal(
             api_client=mock_api_client,
             config=test_app_config,
             start_checker_thread=False
         )
 
-        # Mock insufficient USDC balance
-        with patch.object(terminal, 'get_account_balance', return_value=100.0):
+        # Mock insufficient USDC balance - patch on market_data (where OrderExecutor looks)
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=100.0):
             # Try to buy 1 BTC at $50,000 (need $50,000 but only have $100)
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',
@@ -276,20 +269,14 @@ class TestBalanceValidation:
 
     def test_insufficient_balance_sell_order(self, mock_api_client, test_app_config):
         """Test that sell orders fail with insufficient base currency balance."""
-        mock_product = Mock()
-        mock_product.base_min_size = '0.0001'
-        mock_product.base_max_size = '10000'
-        mock_product.quote_increment = '0.01'
-        mock_api_client.get_product.return_value = mock_product
-
         terminal = TradingTerminal(
             api_client=mock_api_client,
             config=test_app_config,
             start_checker_thread=False
         )
 
-        # Mock insufficient BTC balance
-        with patch.object(terminal, 'get_account_balance', return_value=0.0001):
+        # Mock insufficient BTC balance - patch on market_data (where OrderExecutor looks)
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=0.0001):
             # Try to sell 1 BTC but only have 0.0001 BTC
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',
@@ -303,20 +290,14 @@ class TestBalanceValidation:
 
     def test_order_size_below_minimum(self, mock_api_client, test_app_config):
         """Test that orders below minimum size are rejected."""
-        mock_product = Mock()
-        mock_product.base_min_size = '0.0001'  # Minimum 0.0001 BTC
-        mock_product.base_max_size = '10000'
-        mock_product.quote_increment = '0.01'
-        mock_api_client.get_product.return_value = mock_product
-
         terminal = TradingTerminal(
             api_client=mock_api_client,
             config=test_app_config,
             start_checker_thread=False
         )
 
-        # Mock sufficient balance
-        with patch.object(terminal, 'get_account_balance', return_value=1.0):
+        # Mock sufficient balance - patch on market_data (where OrderExecutor looks)
+        with patch.object(terminal.market_data, 'get_account_balance', return_value=1.0):
             # Try to sell below minimum
             result = terminal.place_limit_order_with_retry(
                 product_id='BTC-USDC',

@@ -71,8 +71,8 @@ class TestTWAPExecution:
 
         # Mock account balance
         with patch.object(terminal, 'get_input', side_effect=inputs):
-            with patch.object(terminal, 'get_account_balance', return_value=100000.0):
-                with patch.object(terminal, 'get_consolidated_markets', return_value=(
+            with patch.object(terminal.market_data, 'get_account_balance', return_value=100000.0):
+                with patch.object(terminal.market_data, 'get_consolidated_markets', return_value=(
                     [['1', 'BTC', '$1,000,000']], ['#', 'Market', 'Volume'], mock_markets
                 )):
                     with patch('time.sleep'):  # Skip wait time for testing
@@ -153,8 +153,8 @@ class TestTWAPExecution:
         )
 
         with patch.object(terminal, 'get_input', side_effect=inputs):
-            with patch.object(terminal, 'get_account_balance', side_effect=balance_values):
-                with patch.object(terminal, 'get_consolidated_markets', return_value=(
+            with patch.object(terminal.market_data, 'get_account_balance', side_effect=balance_values):
+                with patch.object(terminal.market_data, 'get_consolidated_markets', return_value=(
                     [['1', 'BTC', '$1,000,000']], ['#', 'Market', 'Volume'], mock_markets
                 )):
                     with patch('time.sleep'):  # Skip wait time
@@ -233,11 +233,11 @@ class TestTWAPExecution:
             )
 
             with patch.object(terminal, 'get_input', side_effect=inputs):
-                with patch.object(terminal, 'get_account_balance', return_value=100000.0):
-                    with patch.object(terminal, 'get_consolidated_markets', return_value=(
+                with patch.object(terminal.market_data, 'get_account_balance', return_value=100000.0):
+                    with patch.object(terminal.market_data, 'get_consolidated_markets', return_value=(
                         [['1', 'BTC', '$1,000,000']], ['#', 'Market', 'Volume'], mock_markets
                     )):
-                        with patch.object(terminal, 'get_current_prices', return_value=mock_prices):
+                        with patch.object(terminal.market_data, 'get_current_prices', return_value=mock_prices):
                             with patch('time.sleep'):  # Skip wait time
                                 # ACT
                                 twap_id = terminal._place_twap_order_impl()
@@ -316,8 +316,8 @@ class TestTWAPExecution:
         terminal.twap_tracker.save_twap_order = track_saves
 
         with patch.object(terminal, 'get_input', side_effect=inputs):
-            with patch.object(terminal, 'get_account_balance', return_value=100000.0):
-                with patch.object(terminal, 'get_consolidated_markets', return_value=(
+            with patch.object(terminal.market_data, 'get_account_balance', return_value=100000.0):
+                with patch.object(terminal.market_data, 'get_consolidated_markets', return_value=(
                     [['1', 'BTC', '$1,000,000']], ['#', 'Market', 'Volume'], mock_markets
                 )):
                     with patch('time.sleep'):  # Skip wait time
