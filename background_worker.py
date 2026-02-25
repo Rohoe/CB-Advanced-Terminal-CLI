@@ -20,14 +20,16 @@ class OrderStatusChecker:
     Without WebSocket, REST polling continues at 0.5-second intervals.
     """
 
-    def __init__(self, terminal, websocket_service=None):
+    def __init__(self, terminal, websocket_service=None, analytics_service=None):
         """
         Args:
             terminal: TradingTerminal instance (provides shared state and services).
             websocket_service: Optional WebSocketService for push-based fills.
+            analytics_service: Optional AnalyticsService for P&L recording.
         """
         self.terminal = terminal
         self.websocket_service = websocket_service
+        self.analytics_service = analytics_service
 
         # Register fill callback if WebSocket is available
         if websocket_service:

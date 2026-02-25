@@ -168,3 +168,6 @@ twap_data/
 scaled_data/
 conditional_data/
 *.code-workspace
+trading.db
+trading.db-wal
+trading.db-shm

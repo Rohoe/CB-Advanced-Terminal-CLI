@@ -22,7 +22,8 @@ class TWAPExecutor:
     a large order into smaller slices over a specified duration.
     """
 
-    def __init__(self, order_executor, market_data, twap_storage, order_queue, config):
+    def __init__(self, order_executor, market_data, twap_storage, order_queue, config,
+                 analytics_service=None):
         """
         Args:
             order_executor: OrderExecutor instance.
@@ -30,6 +31,7 @@ class TWAPExecutor:
             twap_storage: TWAPStorage instance.
             order_queue: Queue for background order monitoring.
             config: AppConfig instance.
+            analytics_service: Optional AnalyticsService for arrival price capture.
         """
         self.order_executor = order_executor
         self.market_data = market_data
@@ -37,6 +39,7 @@ class TWAPExecutor:
         self.order_queue = order_queue
         self.config = config
         self.rate_limiter = market_data.rate_limiter
+        self.analytics_service = analytics_service
 
         # Get the underlying tracker for direct access
         if hasattr(twap_storage, '_tracker'):
@@ -245,6 +248,15 @@ class TWAPExecutor:
         )
 
         self.twap_tracker.save_twap_order(twap_order)
+
+        # Capture arrival price for slippage analysis
+        if self.analytics_service:
+            arrival_prices = self.market_data.get_current_prices(product_id)
+            if arrival_prices:
+                self.analytics_service.record_price_snapshot(
+                    twap_id, 'arrival', product_id,
+                    arrival_prices['bid'], arrival_prices['ask'], arrival_prices['mid']
+                )
 
         slice_size = float(order_input["base_size"]) / num_slices
         slice_interval = (duration * 60) / num_slices

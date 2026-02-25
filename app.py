@@ -35,6 +35,8 @@ from scaled_executor import ScaledExecutor
 from vwap_executor import VWAPExecutor
 from background_worker import OrderStatusChecker
 from websocket_service import WebSocketService
+from analytics_service import AnalyticsService
+from analytics_display import AnalyticsDisplay
 
 
 # Configure logging with both file and console output
@@ -211,7 +213,10 @@ class TradingTerminal:
             # Background thread for order status checking
             if start_checker_thread:
                 logging.debug("Starting checker thread")
-                self._status_checker = OrderStatusChecker(self, self.websocket_service)
+                self._status_checker = OrderStatusChecker(
+                    self, self.websocket_service,
+                    analytics_service=getattr(self, 'analytics_service', None)
+                )
                 self.checker_thread = Thread(target=self._status_checker.run)
                 self.checker_thread.daemon = True
                 self.checker_thread.start()
@@ -278,6 +283,14 @@ class TradingTerminal:
             api_client=self.client,
             config=self.config
         )
+
+        # Analytics
+        self.analytics_service = AnalyticsService(self.database)
+        self.analytics_display = AnalyticsDisplay(self.analytics_service)
+
+        # Wire analytics into executors
+        self.twap_executor.analytics_service = self.analytics_service
+        self.scaled_executor.analytics_service = self.analytics_service
 
         # DisplayService
         self.display_service = DisplayService(
@@ -1011,8 +1024,14 @@ class TradingTerminal:
                 print("12. VWAP order")
                 print("13. View VWAP fills")
 
+                # Analytics
+                print(info("\n=== Analytics ==="))
+                print("14. View P&L Summary")
+                print("15. View Execution Analytics")
+                print("16. View Fee Analysis")
+
                 try:
-                    choice = self.get_input("\nEnter your choice (1-13)")
+                    choice = self.get_input("\nEnter your choice (1-16)")
                 except CancelledException:
                     print_info("\nExiting application.")
                     break
@@ -1069,6 +1088,12 @@ class TradingTerminal:
                         print_success(f"VWAP order completed: {highlight(vwap_id[:8])}...")
                 elif choice == '13':
                     self.view_vwap_fills()
+                elif choice == '14':
+                    self.analytics_display.display_pnl_summary()
+                elif choice == '15':
+                    self.analytics_display.display_execution_report()
+                elif choice == '16':
+                    self.analytics_display.display_fee_summary()
                 else:
                     print_warning("Invalid choice. Please try again.")
         except Exception as e:

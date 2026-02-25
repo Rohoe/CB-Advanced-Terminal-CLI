@@ -36,15 +36,23 @@ pytest tests/test_validators.py           # Specific file
 ### Core Infrastructure
 - `api_client.py` — `APIClient` abstract interface + `CoinbaseAPIClient` production implementation + `APIClientFactory`
 - `config.py` — `Config` class for API credentials (loads from env vars, prompts for secret)
-- `config_manager.py` — `AppConfig` + sub-configs (`RateLimitConfig`, `CacheConfig`, `TWAPConfig`, `RetryConfig`, `DisplayConfig`, `PrecisionConfig`); all configurable via env vars; uses `_env()` helper for DRY env var loading
-- `storage.py` — `TWAPStorage` abstract interface + `FileBasedTWAPStorage` (JSON in `twap_data/`) + `InMemoryTWAPStorage` for tests
+- `config_manager.py` — `AppConfig` + sub-configs (`RateLimitConfig`, `CacheConfig`, `TWAPConfig`, `RetryConfig`, `DisplayConfig`, `PrecisionConfig`, `DatabaseConfig`, `WebSocketConfig`); all configurable via env vars; uses `_env()` helper for DRY env var loading
+- `database.py` — Thread-safe `Database` class with WAL mode, thread-local connections, context-managed `transaction()`/`read()`, and unified schema (`orders`, `child_orders`, `fills`, `twap_slices`, `scaled_levels`, `price_snapshots`, `pnl_ledger`)
+- `storage.py` — `TWAPStorage` abstract interface + `FileBasedTWAPStorage` (JSON in `twap_data/`) + `InMemoryTWAPStorage` for tests + `StorageFactory`
+- `sqlite_storage.py` — `SQLiteTWAPStorage`, `SQLiteScaledOrderTracker`, `SQLiteConditionalOrderTracker` — SQLite implementations of storage ABCs
+- `migrate_json_to_sqlite.py` — `JSONToSQLiteMigrator` auto-migrates existing JSON data to SQLite on startup
 - `validators.py` — `InputValidator` static methods + `ValidationError`; validates price, size, duration, slices, side, product_id, price_type
-- `market_data.py` — Market data fetching and caching (candles, order book, products); delegates precision to `PrecisionService`
+- `market_data.py` — Market data fetching and caching (candles, order book, products); tries WebSocket cache first, falls back to REST
 - `precision_service.py` — `PrecisionService` with `round_size()` and `round_price()` using product-specific increments
 - `base_tracker.py` — `BaseOrderTracker` generic persistence base class (JSON file I/O, directory management)
 - `input_helpers.py` — `InteractiveInputHelper` for validated user input collection (market, side, price, size, duration, slices)
-- `background_worker.py` — `OrderStatusChecker` daemon thread for monitoring order fills
+- `background_worker.py` — `OrderStatusChecker` daemon thread for monitoring order fills; supports push-based WebSocket fills with REST polling fallback
 - `order_view_service.py` — `OrderViewService` for order data access (active orders, history, conditional sync)
+- `websocket_service.py` — `WebSocketService` wrapping SDK's `WSClient` for real-time ticker prices and user channel fills; thread-safe price cache with staleness check
+
+### Analytics
+- `analytics_service.py` — `AnalyticsService(db)` with P&L tracking (`get_realized_pnl`, `get_cost_basis`, `get_cumulative_pnl`), execution quality (`get_slippage_analysis`, `get_fill_rate_analysis`, `get_maker_taker_analysis`, `get_fee_analysis`), and arrival price recording
+- `analytics_display.py` — `AnalyticsDisplay` with formatted terminal output for P&L summaries, execution reports, fee analysis, daily P&L
 
 ### Strategy System
 - `order_strategy.py` — `OrderStrategy` protocol defining `calculate_slices()`, `should_skip_slice()`, `get_execution_price()`, `on_slice_complete()`
@@ -59,7 +67,7 @@ pytest tests/test_validators.py           # Specific file
 - `scaled_orders.py` — `ScaledOrder` dataclass + distribution types (linear, exponential, flat)
 - `scaled_strategy.py` — `ScaledStrategy` implementing `OrderStrategy`
 - `scaled_executor.py` — `ScaledExecutor` orchestrating scaled order flow
-- `scaled_order_tracker.py` — Scaled order tracking + persistence (JSON in `scaled_data/`)
+- `scaled_order_tracker.py` — `ScaledOrderStorage` ABC + `ScaledOrderTracker` JSON persistence (in `scaled_data/`)
 
 ### VWAP
 - `vwap_strategy.py` — `VWAPStrategy` with volume profile weighting and benchmark tracking
@@ -68,7 +76,7 @@ pytest tests/test_validators.py           # Specific file
 ### Conditional Orders
 - `conditional_orders.py` — `ConditionalOrder` dataclass + order types (stop-limit, bracket, attached bracket)
 - `conditional_executor.py` — `ConditionalExecutor` monitoring trigger conditions
-- `conditional_order_tracker.py` — Conditional order tracking + persistence (JSON in `conditional_data/`)
+- `conditional_order_tracker.py` — `ConditionalOrderStorage` ABC + `ConditionalOrderTracker` JSON persistence (in `conditional_data/`)
 
 ### UI
 - `display_service.py` — Portfolio display, order tables, TWAP summaries
@@ -81,9 +89,10 @@ pytest tests/test_validators.py           # Specific file
 `TradingTerminal` (`app.py`) accepts injectable dependencies:
 - `api_client`: `APIClient` interface — abstracts Coinbase API calls
 - `twap_storage`: `TWAPStorage` interface — abstracts order persistence
+- `database`: `Database` instance — SQLite persistence (defaults to `trading.db`)
 - `config`: `AppConfig` — centralized configuration
 
-Testing uses `MockCoinbaseAPI` (in `tests/mocks/`) and `InMemoryTWAPStorage`.
+Default storage is SQLite (`SQLiteTWAPStorage`, `SQLiteScaledOrderTracker`, `SQLiteConditionalOrderTracker`). Testing uses `MockCoinbaseAPI` (in `tests/mocks/`), `InMemoryTWAPStorage`, and in-memory SQLite (`sqlite_db` fixture).
 
 ### Rate Limiter (`app.py`)
 - Token bucket algorithm: 25 req/s default, burst of 50
@@ -94,10 +103,24 @@ Testing uses `MockCoinbaseAPI` (in `tests/mocks/`) and `InMemoryTWAPStorage`.
 - Account: 60s TTL | Order status: 5s | Fills: 5s | Product metadata: 300s
 - All support `force_refresh=True`
 
-### Order Status Checker Thread (`app.py`)
+### Order Status Checker Thread (`background_worker.py`)
 - Daemon thread monitors order fills in background
 - Batches up to 50 orders via `check_order_fills_batch()`
 - Thread-safe with `self.order_lock`
+- When WebSocket connected: push-based fill detection via callbacks, REST polling reduced to 30s backup
+- Without WebSocket: REST polling at 0.5s intervals
+
+### WebSocket (`websocket_service.py`)
+- Optional enhancement — app works without WebSocket (REST fallback)
+- Ticker channel: real-time prices cached with staleness check (`WS_PRICE_STALE_SECONDS`, default 5s)
+- User channel: push-based fill events via `register_fill_callback()`
+- Auto-reconnect via SDK's `retry=True`
+
+### Analytics (`analytics_service.py`)
+- P&L tracking via `pnl_ledger` table with slippage in basis points
+- Arrival price capture: market mid recorded at order creation and slice placement
+- Execution quality: slippage, fill rate, maker/taker ratio, fee analysis
+- Menu items 14-16: P&L Summary, Execution Analytics, Fee Analysis
 
 ### Strategy Execution Flow
 1. Create strategy (e.g., `TWAPStrategy`) with parameters, config, API client
@@ -129,6 +152,10 @@ tests/
 ├── test_scaled_strategy.py        # Scaled strategy
 ├── test_vwap_executor.py          # VWAP executor
 ├── test_vwap_strategy.py          # VWAP strategy
+├── test_sqlite_storage.py         # SQLite storage implementations
+├── test_migration.py              # JSON-to-SQLite migration
+├── test_websocket_service.py      # WebSocket service
+├── test_analytics_service.py      # Analytics engine
 ├── helpers/
 │   └── shape_compare.py           # Response shape comparison utility
 ├── integration/                   # Integration tests
@@ -152,7 +179,8 @@ tests/
 
 **Key Fixtures** (`tests/conftest.py`):
 - `mock_api_client` / `mock_twap_storage` / `test_app_config` — fast test defaults
-- `terminal_with_mocks` — fully configured terminal for integration tests
+- `sqlite_db` / `sqlite_twap_storage` — in-memory SQLite fixtures
+- `terminal_with_mocks` — fully configured terminal with in-memory SQLite for integration tests
 - `sandbox_client` — CoinbaseAPIClient pointed at sandbox (patches SDK auth gate)
 
 **Test Markers:** `unit`, `integration`, `slow`, `vcr`, `sandbox`, `public_api`, `authenticated`
@@ -183,6 +211,8 @@ tests/
 - `TWAP_JITTER_PCT` (0.0), `TWAP_ADAPTIVE_ENABLED` (false), `TWAP_ADAPTIVE_TIMEOUT` (30), `TWAP_ADAPTIVE_MAX_RETRIES` (3)
 - `TWAP_PARTICIPATION_RATE_CAP` (0.0), `TWAP_VOLUME_LOOKBACK` (5)
 - `TWAP_MARKET_FALLBACK_ENABLED` (false), `TWAP_MARKET_FALLBACK_REMAINING_SLICES` (1)
+- `DB_PATH` (trading.db), `DB_WAL_MODE` (true)
+- `WS_ENABLED` (true), `WS_TICKER_ENABLED` (true), `WS_USER_CHANNEL_ENABLED` (true), `WS_PRICE_STALE_SECONDS` (5)
 - See `config_manager.py` for full list
 
 **Security:** API secret prompted at runtime, never stored to disk. `.env` is git-ignored.

@@ -246,8 +246,7 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     bid             REAL,
     ask             REAL,
     mid             REAL,
-    timestamp       TEXT NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(order_id)
+    timestamp       TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_order ON price_snapshots(order_id);
@@ -268,8 +267,7 @@ CREATE TABLE IF NOT EXISTS pnl_ledger (
     slippage_bps    REAL,          -- slippage in basis points
     maker_ratio     REAL,          -- fraction of fills that were maker
     completed_at    TEXT NOT NULL,
-    metadata        TEXT DEFAULT '{}',
-    FOREIGN KEY (order_id) REFERENCES orders(order_id)
+    metadata        TEXT DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_pnl_product ON pnl_ledger(product_id);

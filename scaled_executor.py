@@ -31,7 +31,7 @@ class ScaledExecutor:
     """
 
     def __init__(self, order_executor, market_data, order_queue, config,
-                 scaled_tracker=None):
+                 scaled_tracker=None, analytics_service=None):
         """
         Args:
             order_executor: OrderExecutor instance.
@@ -39,12 +39,14 @@ class ScaledExecutor:
             order_queue: Queue for background order monitoring.
             config: AppConfig instance.
             scaled_tracker: ScaledOrderStorage implementation (None = JSON-based).
+            analytics_service: Optional AnalyticsService for arrival price capture.
         """
         self.order_executor = order_executor
         self.market_data = market_data
         self.order_queue = order_queue
         self.config = config
         self.scaled_tracker = scaled_tracker or ScaledOrderTracker()
+        self.analytics_service = analytics_service
         self._input_helper = InteractiveInputHelper(market_data)
 
     def place_scaled_order(self, get_input_fn: Callable) -> Optional[str]:
@@ -170,6 +172,15 @@ class ScaledExecutor:
             if confirm != 'yes':
                 print("Scaled order cancelled.")
                 return None
+
+            # Capture arrival price
+            if self.analytics_service:
+                arrival_prices = self.market_data.get_current_prices(product_id)
+                if arrival_prices:
+                    self.analytics_service.record_price_snapshot(
+                        f"scaled-{str(uuid.uuid4())[:8]}", 'arrival', product_id,
+                        arrival_prices['bid'], arrival_prices['ask'], arrival_prices['mid']
+                    )
 
             # Execute
             scaled_id = str(uuid.uuid4())

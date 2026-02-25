@@ -486,7 +486,7 @@ def reset_environment():
 
 
 @pytest.fixture
-def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, mock_rate_limiter):
+def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, mock_rate_limiter, sqlite_db):
     """
     Fully configured TradingTerminal for integration tests.
 
@@ -498,6 +498,7 @@ def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, moc
         mock_twap_storage: In-memory TWAP storage fixture
         test_app_config: Test application config fixture
         mock_rate_limiter: Mocked rate limiter fixture
+        sqlite_db: In-memory SQLite database fixture
 
     Returns:
         TradingTerminal: Configured terminal instance ready for testing
@@ -514,6 +515,7 @@ def terminal_with_mocks(mock_api_client, mock_twap_storage, test_app_config, moc
         api_client=mock_api_client,
         twap_storage=mock_twap_storage,
         config=test_app_config,
+        database=sqlite_db,
         start_checker_thread=False  # Disable background thread for most tests
     )
     terminal.rate_limiter = mock_rate_limiter
