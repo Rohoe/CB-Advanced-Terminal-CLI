@@ -31,15 +31,20 @@ pytest tests/test_validators.py           # Specific file
 ## Source Files
 
 ### Entry Point
-- `app.py` — Main `TradingTerminal` class, CLI menu, rate limiter, order status checker thread
+- `app.py` — Main `TradingTerminal` class, CLI menu, rate limiter; delegates order monitoring to `background_worker.py`
 
 ### Core Infrastructure
 - `api_client.py` — `APIClient` abstract interface + `CoinbaseAPIClient` production implementation + `APIClientFactory`
 - `config.py` — `Config` class for API credentials (loads from env vars, prompts for secret)
-- `config_manager.py` — `AppConfig` + sub-configs (`RateLimitConfig`, `CacheConfig`, `TWAPConfig`, `RetryConfig`, `DisplayConfig`, `PrecisionConfig`); all configurable via env vars
+- `config_manager.py` — `AppConfig` + sub-configs (`RateLimitConfig`, `CacheConfig`, `TWAPConfig`, `RetryConfig`, `DisplayConfig`, `PrecisionConfig`); all configurable via env vars; uses `_env()` helper for DRY env var loading
 - `storage.py` — `TWAPStorage` abstract interface + `FileBasedTWAPStorage` (JSON in `twap_data/`) + `InMemoryTWAPStorage` for tests
 - `validators.py` — `InputValidator` static methods + `ValidationError`; validates price, size, duration, slices, side, product_id, price_type
-- `market_data.py` — Market data fetching and caching (candles, order book, products)
+- `market_data.py` — Market data fetching and caching (candles, order book, products); delegates precision to `PrecisionService`
+- `precision_service.py` — `PrecisionService` with `round_size()` and `round_price()` using product-specific increments
+- `base_tracker.py` — `BaseOrderTracker` generic persistence base class (JSON file I/O, directory management)
+- `input_helpers.py` — `InteractiveInputHelper` for validated user input collection (market, side, price, size, duration, slices)
+- `background_worker.py` — `OrderStatusChecker` daemon thread for monitoring order fills
+- `order_view_service.py` — `OrderViewService` for order data access (active orders, history, conditional sync)
 
 ### Strategy System
 - `order_strategy.py` — `OrderStrategy` protocol defining `calculate_slices()`, `should_skip_slice()`, `get_execution_price()`, `on_slice_complete()`
