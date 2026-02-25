@@ -1,9 +1,8 @@
 """
 Persistence layer for conditional orders.
 
-This module provides JSON-based storage and retrieval for conditional orders,
-using BaseOrderTracker for common file I/O. Each order type gets its own
-subdirectory for organization.
+Provides an abstract interface and JSON-based implementation for
+conditional order storage, using BaseOrderTracker for common file I/O.
 
 Directory Structure:
     conditional_data/
@@ -30,6 +29,7 @@ Usage:
 """
 
 import logging
+from abc import ABC, abstractmethod
 from typing import Optional, List, Union
 from dataclasses import asdict
 
@@ -37,7 +37,68 @@ from base_tracker import BaseOrderTracker
 from conditional_orders import StopLimitOrder, BracketOrder, AttachedBracketOrder
 
 
-class ConditionalOrderTracker(BaseOrderTracker):
+class ConditionalOrderStorage(ABC):
+    """Abstract interface for conditional order persistence."""
+
+    @abstractmethod
+    def save_stop_limit_order(self, order: StopLimitOrder) -> None:
+        pass
+
+    @abstractmethod
+    def get_stop_limit_order(self, order_id: str) -> Optional[StopLimitOrder]:
+        pass
+
+    @abstractmethod
+    def list_stop_limit_orders(self, status: Optional[str] = None) -> List[StopLimitOrder]:
+        pass
+
+    @abstractmethod
+    def save_bracket_order(self, order: BracketOrder) -> None:
+        pass
+
+    @abstractmethod
+    def get_bracket_order(self, order_id: str) -> Optional[BracketOrder]:
+        pass
+
+    @abstractmethod
+    def list_bracket_orders(self, status: Optional[str] = None) -> List[BracketOrder]:
+        pass
+
+    @abstractmethod
+    def save_attached_bracket_order(self, order: AttachedBracketOrder) -> None:
+        pass
+
+    @abstractmethod
+    def get_attached_bracket_order(self, order_id: str) -> Optional[AttachedBracketOrder]:
+        pass
+
+    @abstractmethod
+    def list_attached_bracket_orders(self, status: Optional[str] = None) -> List[AttachedBracketOrder]:
+        pass
+
+    @abstractmethod
+    def list_all_active_orders(self) -> List[Union[StopLimitOrder, BracketOrder, AttachedBracketOrder]]:
+        pass
+
+    @abstractmethod
+    def get_order_by_id(self, order_id: str) -> Optional[Union[StopLimitOrder, BracketOrder, AttachedBracketOrder]]:
+        pass
+
+    @abstractmethod
+    def update_order_status(self, order_id: str, order_type: str, status: str,
+                            fill_info: Optional[dict] = None) -> bool:
+        pass
+
+    @abstractmethod
+    def delete_order(self, order_id: str, order_type: str) -> bool:
+        pass
+
+    @abstractmethod
+    def get_statistics(self) -> dict:
+        pass
+
+
+class ConditionalOrderTracker(ConditionalOrderStorage, BaseOrderTracker):
     """
     Manages persistence and retrieval of conditional orders.
 

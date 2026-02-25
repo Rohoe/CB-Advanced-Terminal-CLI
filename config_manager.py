@@ -188,6 +188,46 @@ class DisplayConfig:
 
 
 @dataclass
+class DatabaseConfig:
+    """
+    Configuration for SQLite database.
+
+    Attributes:
+        db_path: Path to the SQLite database file.
+        wal_mode: Whether to use WAL journal mode for concurrent reads/writes.
+
+    Environment Variables:
+        DB_PATH: Database file path (default: trading.db)
+        DB_WAL_MODE: Enable WAL mode (default: true)
+    """
+    db_path: str = "trading.db"
+    wal_mode: bool = True
+
+
+@dataclass
+class WebSocketConfig:
+    """
+    Configuration for WebSocket connections.
+
+    Attributes:
+        enabled: Whether WebSocket is enabled.
+        ticker_enabled: Whether to subscribe to ticker channel.
+        user_channel_enabled: Whether to subscribe to user channel (fills).
+        price_stale_seconds: Seconds before cached price is considered stale.
+
+    Environment Variables:
+        WS_ENABLED: Enable WebSocket (default: true)
+        WS_TICKER_ENABLED: Enable ticker channel (default: true)
+        WS_USER_CHANNEL_ENABLED: Enable user channel (default: true)
+        WS_PRICE_STALE_SECONDS: Price staleness threshold (default: 5)
+    """
+    enabled: bool = True
+    ticker_enabled: bool = True
+    user_channel_enabled: bool = True
+    price_stale_seconds: int = 5
+
+
+@dataclass
 class PrecisionConfig:
     """
     Product-specific precision configuration.
@@ -237,6 +277,8 @@ class AppConfig:
         self.display = self._load_display_config()
         self.precision = PrecisionConfig()
         self.vwap = self._load_vwap_config()
+        self.database = self._load_database_config()
+        self.websocket = self._load_websocket_config()
 
     def _load_rate_limit_config(self) -> RateLimitConfig:
         """Load rate limit configuration from environment."""
@@ -285,6 +327,22 @@ class AppConfig:
             default_lookback_hours=_env('VWAP_LOOKBACK_HOURS', 24, int),
             default_granularity=_env('VWAP_GRANULARITY', 'ONE_HOUR'),
             benchmark_enabled=_env('VWAP_BENCHMARK_ENABLED', True, bool),
+        )
+
+    def _load_database_config(self) -> DatabaseConfig:
+        """Load database configuration from environment."""
+        return DatabaseConfig(
+            db_path=_env('DB_PATH', 'trading.db'),
+            wal_mode=_env('DB_WAL_MODE', True, bool),
+        )
+
+    def _load_websocket_config(self) -> WebSocketConfig:
+        """Load WebSocket configuration from environment."""
+        return WebSocketConfig(
+            enabled=_env('WS_ENABLED', True, bool),
+            ticker_enabled=_env('WS_TICKER_ENABLED', True, bool),
+            user_channel_enabled=_env('WS_USER_CHANNEL_ENABLED', True, bool),
+            price_stale_seconds=_env('WS_PRICE_STALE_SECONDS', 5, int),
         )
 
     def _load_display_config(self) -> DisplayConfig:
@@ -343,6 +401,16 @@ class AppConfig:
                 'default_lookback_hours': self.vwap.default_lookback_hours,
                 'default_granularity': self.vwap.default_granularity,
                 'benchmark_enabled': self.vwap.benchmark_enabled
+            },
+            'database': {
+                'db_path': self.database.db_path,
+                'wal_mode': self.database.wal_mode
+            },
+            'websocket': {
+                'enabled': self.websocket.enabled,
+                'ticker_enabled': self.websocket.ticker_enabled,
+                'user_channel_enabled': self.websocket.user_channel_enabled,
+                'price_stale_seconds': self.websocket.price_stale_seconds
             }
         }
 

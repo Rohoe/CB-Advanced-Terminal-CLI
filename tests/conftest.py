@@ -386,6 +386,29 @@ def make_conditional_executor():
 
 
 # =============================================================================
+# SQLite Fixtures
+# =============================================================================
+
+@pytest.fixture
+def sqlite_db():
+    """In-memory SQLite database for testing."""
+    from database import Database
+    from config_manager import DatabaseConfig
+
+    config = DatabaseConfig(db_path=":memory:", wal_mode=False)
+    db = Database(config)
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def sqlite_twap_storage(sqlite_db):
+    """SQLite-backed TWAP storage for testing."""
+    from sqlite_storage import SQLiteTWAPStorage
+    return SQLiteTWAPStorage(sqlite_db)
+
+
+# =============================================================================
 # Helper Fixtures
 # =============================================================================
 

@@ -11,7 +11,9 @@ import logging
 from config import Config, ConfigurationError
 from config_manager import AppConfig
 from api_client import APIClient, CoinbaseAPIClient
+from database import Database
 from storage import TWAPStorage, FileBasedTWAPStorage
+from sqlite_storage import SQLiteTWAPStorage, SQLiteScaledOrderTracker, SQLiteConditionalOrderTracker
 from validators import InputValidator, ValidationError
 import time
 from threading import Lock, Thread
@@ -103,7 +105,8 @@ class TradingTerminal:
                  api_client: Optional[APIClient] = None,
                  twap_storage: Optional[TWAPStorage] = None,
                  config: Optional[AppConfig] = None,
-                 start_checker_thread: bool = True):
+                 start_checker_thread: bool = True,
+                 database: Optional[Database] = None):
         """
         Initialize the trading terminal with dependency injection.
 
@@ -112,6 +115,7 @@ class TradingTerminal:
             twap_storage: TWAP storage implementation (None = use file-based storage).
             config: Application configuration (None = load from environment).
             start_checker_thread: Whether to start the background order checker thread.
+            database: Database instance (None = create from config).
         """
         logging.info("Initializing TradingTerminal")
         try:
@@ -122,8 +126,16 @@ class TradingTerminal:
             # API Client (may be None initially, set during login)
             self.client = api_client
 
-            # TWAP Storage
-            self.twap_storage = twap_storage or FileBasedTWAPStorage()
+            # Database + auto-migration from JSON
+            self.database = database or Database(self.config.database)
+            from migrate_json_to_sqlite import JSONToSQLiteMigrator
+            JSONToSQLiteMigrator(self.database).migrate_if_needed()
+
+            # TWAP Storage (prefer SQLite, fall back to provided or file-based)
+            if twap_storage:
+                self.twap_storage = twap_storage
+            else:
+                self.twap_storage = SQLiteTWAPStorage(self.database)
 
             # For backward compatibility, also keep TWAPTracker reference
             if isinstance(self.twap_storage, FileBasedTWAPStorage):
@@ -154,10 +166,9 @@ class TradingTerminal:
             self.twap_orders = {}
             self.order_to_twap_map = {}
 
-            # Conditional orders tracking
+            # Conditional orders tracking (SQLite-backed)
             logging.debug("Initializing conditional order tracking")
-            from conditional_order_tracker import ConditionalOrderTracker
-            self.conditional_order_tracker = ConditionalOrderTracker()
+            self.conditional_order_tracker = SQLiteConditionalOrderTracker(self.database)
             self.order_to_conditional_map = {}
             self.conditional_lock = Lock()
 
@@ -247,12 +258,13 @@ class TradingTerminal:
             config=self.config
         )
 
-        # ScaledExecutor
+        # ScaledExecutor (with SQLite-backed tracker)
         self.scaled_executor = ScaledExecutor(
             order_executor=self.order_executor,
             market_data=self.market_data,
             order_queue=self.order_queue,
-            config=self.config
+            config=self.config,
+            scaled_tracker=SQLiteScaledOrderTracker(self.database)
         )
 
         # VWAPExecutor
@@ -1029,6 +1041,8 @@ class TradingTerminal:
             self.is_running = False
             if self.checker_thread and self.checker_thread.is_alive():
                 self.checker_thread.join(timeout=5)
+            if hasattr(self, 'database'):
+                self.database.close()
     # End of the TradingTerminal class
 
 def main():

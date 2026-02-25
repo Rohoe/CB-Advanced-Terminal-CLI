@@ -30,19 +30,21 @@ class ScaledExecutor:
     across a price range.
     """
 
-    def __init__(self, order_executor, market_data, order_queue, config):
+    def __init__(self, order_executor, market_data, order_queue, config,
+                 scaled_tracker=None):
         """
         Args:
             order_executor: OrderExecutor instance.
             market_data: MarketDataService instance.
             order_queue: Queue for background order monitoring.
             config: AppConfig instance.
+            scaled_tracker: ScaledOrderStorage implementation (None = JSON-based).
         """
         self.order_executor = order_executor
         self.market_data = market_data
         self.order_queue = order_queue
         self.config = config
-        self.scaled_tracker = ScaledOrderTracker()
+        self.scaled_tracker = scaled_tracker or ScaledOrderTracker()
         self._input_helper = InteractiveInputHelper(market_data)
 
     def place_scaled_order(self, get_input_fn: Callable) -> Optional[str]:

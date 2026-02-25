@@ -1,8 +1,8 @@
 """
 Persistence layer for scaled/ladder orders.
 
-Provides JSON-based storage and retrieval for scaled orders,
-using BaseOrderTracker for common file I/O.
+Provides an abstract interface and JSON-based implementation for
+scaled order storage, using BaseOrderTracker for common file I/O.
 
 Directory Structure:
     scaled_data/
@@ -11,13 +11,51 @@ Directory Structure:
 """
 
 import logging
+from abc import ABC, abstractmethod
 from typing import Optional, List
 
 from base_tracker import BaseOrderTracker
 from scaled_orders import ScaledOrder
 
 
-class ScaledOrderTracker(BaseOrderTracker):
+class ScaledOrderStorage(ABC):
+    """Abstract interface for scaled order persistence."""
+
+    @abstractmethod
+    def save_scaled_order(self, order: ScaledOrder) -> None:
+        """Save or update a scaled order."""
+        pass
+
+    @abstractmethod
+    def get_scaled_order(self, scaled_id: str) -> Optional[ScaledOrder]:
+        """Retrieve a scaled order by ID."""
+        pass
+
+    @abstractmethod
+    def list_scaled_orders(self, status: Optional[str] = None) -> List[ScaledOrder]:
+        """List all scaled orders, optionally filtered by status."""
+        pass
+
+    @abstractmethod
+    def update_order_status(self, scaled_id: str, status: str,
+                            fill_info: Optional[dict] = None) -> bool:
+        """Update the status of a scaled order."""
+        pass
+
+    @abstractmethod
+    def update_level_status(self, scaled_id: str, level_number: int, status: str,
+                            order_id: Optional[str] = None,
+                            fill_info: Optional[dict] = None) -> bool:
+        """Update a specific level's status within a scaled order."""
+        pass
+
+    @abstractmethod
+    def delete_scaled_order(self, scaled_id: str) -> bool:
+        """Delete a scaled order."""
+        pass
+
+
+class ScaledOrderTracker(ScaledOrderStorage, BaseOrderTracker):
     """Manages persistence and retrieval of scaled orders."""
 
     def __init__(self, base_dir: str = "scaled_data"):

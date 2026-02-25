@@ -366,6 +366,20 @@ class StorageFactory:
         return InMemoryTWAPStorage()
 
     @staticmethod
+    def create_sqlite(db) -> TWAPStorage:
+        """
+        Create a SQLite-backed storage instance.
+
+        Args:
+            db: Database instance.
+
+        Returns:
+            SQLiteTWAPStorage instance.
+        """
+        from sqlite_storage import SQLiteTWAPStorage
+        return SQLiteTWAPStorage(db)
+
+    @staticmethod
     def create_default() -> TWAPStorage:
         """
         Create the default storage implementation.
