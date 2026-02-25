@@ -34,6 +34,7 @@ from display_service import DisplayService
 from scaled_executor import ScaledExecutor
 from vwap_executor import VWAPExecutor
 from background_worker import OrderStatusChecker
+from websocket_service import WebSocketService
 
 
 # Configure logging with both file and console output
@@ -201,13 +202,16 @@ class TradingTerminal:
             self.fee_tier_cache_time = 0
             self.fee_tier_cache_ttl = 3600
 
+            # WebSocket service (initialized after login when credentials are available)
+            self.websocket_service = None
+
             # Initialize extracted service modules
             self._init_services()
 
             # Background thread for order status checking
             if start_checker_thread:
                 logging.debug("Starting checker thread")
-                self._status_checker = OrderStatusChecker(self)
+                self._status_checker = OrderStatusChecker(self, self.websocket_service)
                 self.checker_thread = Thread(target=self._status_checker.run)
                 self.checker_thread.daemon = True
                 self.checker_thread.start()
@@ -920,6 +924,9 @@ class TradingTerminal:
             # Re-initialize services with the real client
             self._init_services()
 
+            # Start WebSocket after successful login
+            self._start_websocket(api_key, api_secret)
+
             logging.info("Login successful")
             print_success("Login successful!")
             return True
@@ -939,6 +946,35 @@ class TradingTerminal:
             print_error(f"Login failed: {str(e)}")
             self.client = None
             return False
+
+    def _start_websocket(self, api_key: str, api_secret: str):
+        """Start WebSocket service after successful login."""
+        if not self.config.websocket.enabled:
+            logging.info("WebSocket disabled by config")
+            return
+
+        try:
+            self.websocket_service = WebSocketService(
+                api_key=api_key,
+                api_secret=api_secret,
+                config=self.config.websocket,
+            )
+            self.websocket_service.start(product_ids=["BTC-USD", "ETH-USD", "SOL-USD"])
+
+            # Wire into services
+            self.market_data.websocket_service = self.websocket_service
+
+            # Update background worker if it exists
+            if hasattr(self, '_status_checker'):
+                self._status_checker.websocket_service = self.websocket_service
+                self.websocket_service.register_fill_callback(
+                    self._status_checker._on_ws_fill
+                )
+
+            logging.info("WebSocket service started")
+        except Exception as e:
+            logging.warning(f"WebSocket failed to start (REST fallback active): {e}")
+            self.websocket_service = None
 
     def run(self):
         """Main execution loop for the trading terminal."""
@@ -1039,6 +1075,8 @@ class TradingTerminal:
             logging.error(f"Critical error in main execution: {str(e)}", exc_info=True)
         finally:
             self.is_running = False
+            if self.websocket_service:
+                self.websocket_service.stop()
             if self.checker_thread and self.checker_thread.is_alive():
                 self.checker_thread.join(timeout=5)
             if hasattr(self, 'database'):

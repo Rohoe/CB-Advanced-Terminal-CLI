@@ -19,12 +19,15 @@ class MarketDataService:
     """
     Handles all market data operations: accounts, prices, order book,
     market selection, and precision rounding.
+
+    Optionally uses a WebSocketService for real-time prices with REST fallback.
     """
 
-    def __init__(self, api_client, rate_limiter, config):
+    def __init__(self, api_client, rate_limiter, config, websocket_service=None):
         self.api_client = api_client
         self.rate_limiter = rate_limiter
         self.config = config
+        self.websocket_service = websocket_service
 
         # Account cache
         self.account_cache = {}
@@ -115,7 +118,17 @@ class MarketDataService:
         return prices
 
     def get_current_prices(self, product_id: str):
-        """Get current bid, ask, and mid prices for a product."""
+        """Get current bid, ask, and mid prices for a product.
+
+        Tries WebSocket cache first, falls back to REST API.
+        """
+        # Try WebSocket cache first
+        if self.websocket_service:
+            ws_prices = self.websocket_service.get_current_prices(product_id)
+            if ws_prices:
+                return ws_prices
+
+        # REST fallback
         try:
             product_book = self.api_client.get_product_book(product_id, limit=1)
             pricebook = product_book['pricebook']

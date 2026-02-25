@@ -13,14 +13,86 @@ from ui_helpers import format_currency, print_success
 
 
 class OrderStatusChecker:
-    """Background thread target that monitors order fills for TWAP and conditional orders."""
+    """Background thread target that monitors order fills for TWAP and conditional orders.
 
-    def __init__(self, terminal):
+    When a WebSocketService is provided, fill events are received via push
+    callbacks. REST polling is reduced to a 30-second backup interval.
+    Without WebSocket, REST polling continues at 0.5-second intervals.
+    """
+
+    def __init__(self, terminal, websocket_service=None):
         """
         Args:
             terminal: TradingTerminal instance (provides shared state and services).
+            websocket_service: Optional WebSocketService for push-based fills.
         """
         self.terminal = terminal
+        self.websocket_service = websocket_service
+
+        # Register fill callback if WebSocket is available
+        if websocket_service:
+            websocket_service.register_fill_callback(self._on_ws_fill)
+            self._ws_poll_interval = 30  # Reduced polling when WS connected
+        else:
+            self._ws_poll_interval = 0.5
+
+    def _on_ws_fill(self, fill_event: dict):
+        """Handle a fill event from WebSocket."""
+        t = self.terminal
+        order_id = fill_event.get('order_id')
+        if not order_id:
+            return
+
+        logging.info(f"WS fill received for order {order_id}")
+
+        # Check if it's a TWAP order
+        with t.twap_lock:
+            twap_id = t.order_to_twap_map.get(order_id)
+
+        if twap_id:
+            with t.order_lock:
+                if order_id not in t.filled_orders:
+                    t.filled_orders.append(order_id)
+
+            try:
+                filled_size = float(fill_event.get('size', 0))
+                price = float(fill_event.get('price', 0))
+                fee = float(fill_event.get('fee', 0))
+
+                with t.twap_lock:
+                    if twap_id in t.twap_orders:
+                        t.twap_orders[twap_id]['total_filled'] += filled_size
+                        t.twap_orders[twap_id]['total_value_filled'] += filled_size * price
+                        t.twap_orders[twap_id]['total_fees'] += fee
+            except (ValueError, TypeError):
+                pass
+            return
+
+        # Check if it's a conditional order
+        with t.conditional_lock:
+            order_info = t.order_to_conditional_map.get(order_id)
+
+        if order_info:
+            order_type, conditional_id = order_info
+            status = fill_event.get('status', 'FILLED')
+
+            result = t.conditional_order_tracker.update_order_status(
+                order_id=conditional_id,
+                order_type=order_type,
+                status=status,
+                fill_info={
+                    'filled_size': str(fill_event.get('size', 0)),
+                    'filled_value': str(float(fill_event.get('size', 0)) * float(fill_event.get('price', 0))),
+                    'fees': str(fill_event.get('fee', 0)),
+                }
+            )
+
+            if result:
+                with t.conditional_lock:
+                    if order_id in t.order_to_conditional_map:
+                        del t.order_to_conditional_map[order_id]
+
+                print_success(f"\nConditional order {order_id[:8]}... FILLED! (via WebSocket)")
 
     def run(self):
         """Background thread to check order statuses efficiently."""
@@ -40,7 +112,7 @@ class OrderStatusChecker:
                     continue
 
                 try:
-                    order = t.order_queue.get(timeout=0.5)
+                    order = t.order_queue.get(timeout=self._ws_poll_interval)
 
                     if order is None:
                         logging.debug("Received shutdown signal")
