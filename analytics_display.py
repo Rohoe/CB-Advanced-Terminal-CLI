@@ -107,7 +107,7 @@ class AnalyticsDisplay:
         print(f"Total Value:{format_currency(summary['total_value'], colored=False)}")
         print(f"Total Fees: {format_currency(summary['total_fees'], colored=False)}")
 
-        if summary['arrival_price']:
+        if summary['arrival_price'] is not None:
             print(f"Arrival:    {format_currency(summary['arrival_price'], colored=False)}")
         if summary['slippage_bps'] is not None:
             slip = summary['slippage_bps']

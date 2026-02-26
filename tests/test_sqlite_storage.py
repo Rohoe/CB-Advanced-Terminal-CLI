@@ -347,3 +347,142 @@ class TestDatabase:
         sqlite_db.initialize_schema()
         tables = sqlite_db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
         assert len(tables) > 0
+
+
+# =============================================================================
+# Tier 2A: SQLite Storage Edge Cases
+# =============================================================================
+
+class TestSQLiteTWAPStorageEdgeCases:
+
+    def test_save_order_with_empty_metadata(self, sqlite_twap_storage, sqlite_db):
+        """Order with minimal data should default metadata correctly."""
+        order = TWAPOrder(
+            twap_id='empty-meta',
+            market='BTC-USD',
+            side='BUY',
+            total_size=1.0,
+            limit_price=50000.0,
+            num_slices=5,
+            start_time='2026-01-01T00:00:00Z',
+            status='active',
+            orders=[],
+            total_placed=0.0,
+            total_filled=0.0,
+            total_value_placed=0.0,
+            total_value_filled=0.0,
+            total_fees=0.0,
+            maker_orders=0,
+            taker_orders=0,
+            failed_slices=[],
+            slice_statuses=[],
+        )
+        sqlite_twap_storage.save_twap_order(order)
+        loaded = sqlite_twap_storage.get_twap_order('empty-meta')
+        assert loaded is not None
+        assert loaded.orders == []
+        assert loaded.failed_slices == []
+
+    def test_delete_twap_cascades_to_slices(self, sqlite_twap_storage, sqlite_db, sample_twap_order):
+        """Deleting a TWAP order should also remove its slices."""
+        sqlite_twap_storage.save_twap_order(sample_twap_order)
+        # Insert a slice manually
+        sqlite_db.execute("""
+            INSERT INTO twap_slices (twap_order_id, slice_number, status)
+            VALUES (?, 1, 'completed')
+        """, (sample_twap_order.twap_id,))
+
+        sqlite_twap_storage.delete_twap_order(sample_twap_order.twap_id)
+        slices = sqlite_db.fetchall(
+            "SELECT * FROM twap_slices WHERE twap_order_id = ?",
+            (sample_twap_order.twap_id,)
+        )
+        assert len(slices) == 0
+
+    def test_delete_twap_cascades_to_child_orders(self, sqlite_twap_storage, sqlite_db, sample_twap_order):
+        """Deleting a TWAP order should also remove child orders."""
+        sqlite_twap_storage.save_twap_order(sample_twap_order)
+        sqlite_db.execute("""
+            INSERT INTO child_orders (child_order_id, parent_order_id, product_id, side, size, price, status)
+            VALUES ('child-1', ?, 'BTC-USD', 'BUY', 0.1, 50000.0, 'placed')
+        """, (sample_twap_order.twap_id,))
+
+        sqlite_twap_storage.delete_twap_order(sample_twap_order.twap_id)
+        children = sqlite_db.fetchall(
+            "SELECT * FROM child_orders WHERE parent_order_id = ?",
+            (sample_twap_order.twap_id,)
+        )
+        assert len(children) == 0
+
+    def test_duplicate_fill_insert(self, sqlite_twap_storage, sample_twap_order, sample_order_fills):
+        """Re-saving fills with same IDs should not raise IntegrityError."""
+        sqlite_twap_storage.save_twap_order(sample_twap_order)
+        sqlite_twap_storage.save_twap_fills(sample_twap_order.twap_id, sample_order_fills)
+        # Save again (same fills) — should succeed via DELETE + re-INSERT
+        sqlite_twap_storage.save_twap_fills(sample_twap_order.twap_id, sample_order_fills)
+        fills = sqlite_twap_storage.get_twap_fills(sample_twap_order.twap_id)
+        assert len(fills) == 2
+
+    def test_large_dataset_twap(self, sqlite_twap_storage):
+        """500 TWAP orders should all round-trip correctly."""
+        for i in range(500):
+            order = TWAPOrder(
+                twap_id=f'twap-bulk-{i}',
+                market='BTC-USD',
+                side='BUY',
+                total_size=1.0,
+                limit_price=50000.0,
+                num_slices=10,
+                start_time='2026-01-01T00:00:00Z',
+                status='active',
+                orders=[],
+                total_placed=0.0,
+                total_filled=0.0,
+                total_value_placed=0.0,
+                total_value_filled=0.0,
+                total_fees=0.0,
+                maker_orders=0,
+                taker_orders=0,
+                failed_slices=[],
+                slice_statuses=[],
+            )
+            sqlite_twap_storage.save_twap_order(order)
+
+        ids = sqlite_twap_storage.list_twap_orders()
+        assert len(ids) == 500
+
+
+class TestSQLiteScaledEdgeCases:
+
+    def test_scaled_order_with_no_levels(self, sqlite_scaled_tracker):
+        """Scaled order with empty levels should round-trip."""
+        order = ScaledOrder(
+            scaled_id='no-levels',
+            product_id='BTC-USD',
+            side='BUY',
+            total_size=1.0,
+            price_low=48000.0,
+            price_high=52000.0,
+            num_orders=0,
+            distribution=DistributionType.LINEAR,
+            status='active',
+            levels=[],
+        )
+        sqlite_scaled_tracker.save_scaled_order(order)
+        loaded = sqlite_scaled_tracker.get_scaled_order('no-levels')
+        assert loaded is not None
+        assert len(loaded.levels) == 0
+
+
+class TestDatabaseReconnect:
+
+    def test_reconnect_after_close(self, tmp_path):
+        """After close(), next query should auto-reconnect."""
+        db_path = str(tmp_path / "reconnect.db")
+        config = DatabaseConfig(db_path=db_path, wal_mode=False)
+        db = Database(config)
+        db.close()
+        # Next call should reconnect via _get_connection()
+        row = db.fetchone("SELECT COUNT(*) as cnt FROM orders")
+        assert row['cnt'] == 0
+        db.close()

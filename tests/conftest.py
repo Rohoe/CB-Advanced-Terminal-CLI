@@ -408,6 +408,55 @@ def sqlite_twap_storage(sqlite_db):
     return SQLiteTWAPStorage(sqlite_db)
 
 
+@pytest.fixture
+def file_sqlite_db(tmp_path):
+    """Temp-file SQLite database with WAL mode for concurrency tests."""
+    from database import Database
+    from config_manager import DatabaseConfig
+
+    db_path = str(tmp_path / "test_concurrent.db")
+    config = DatabaseConfig(db_path=db_path, wal_mode=True)
+    db = Database(config)
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def seeded_sqlite_analytics(sqlite_db):
+    """In-memory DB + AnalyticsService pre-seeded with diverse trade data."""
+    from datetime import datetime, timedelta
+    from analytics_service import AnalyticsService
+
+    analytics = AnalyticsService(sqlite_db)
+    now = datetime.utcnow()
+
+    # Diverse trades across products, strategies, and dates
+    trades = [
+        ('twap-001', 'twap', 'BTC-USD', 'BUY', 0.5, 25000.0, 12.5, 50000.0, 49950.0, 0.8),
+        ('twap-002', 'twap', 'BTC-USD', 'SELL', 0.3, 15300.0, 7.65, 51000.0, 51050.0, 0.6),
+        ('scaled-001', 'scaled', 'ETH-USD', 'BUY', 10.0, 30000.0, 18.0, 3000.0, 2990.0, 1.0),
+        ('vwap-001', 'vwap', 'BTC-USD', 'BUY', 0.2, 10200.0, 5.1, 51000.0, 50900.0, 0.5),
+    ]
+
+    for t in trades:
+        analytics.record_trade_completion(*t)
+
+    # Seed orders for fill rate analysis
+    today = now.isoformat()
+    for oid, stype, pid, side, size in [
+        ('twap-001', 'twap', 'BTC-USD', 'BUY', 0.5),
+        ('twap-002', 'twap', 'BTC-USD', 'SELL', 0.3),
+        ('scaled-001', 'scaled', 'ETH-USD', 'BUY', 10.0),
+        ('vwap-001', 'vwap', 'BTC-USD', 'BUY', 0.2),
+    ]:
+        sqlite_db.execute("""
+            INSERT OR IGNORE INTO orders (order_id, strategy_type, product_id, side, total_size, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (oid, stype, pid, side, size, 'completed', today))
+
+    return analytics
+
+
 # =============================================================================
 # Helper Fixtures
 # =============================================================================

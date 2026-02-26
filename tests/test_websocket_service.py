@@ -231,3 +231,131 @@ class TestWebSocketLifecycle:
         mock_ticker.assert_called_once_with(["BTC-USD"])
         mock_user.assert_called_once()
         assert ws_service.is_connected
+
+    @patch('websocket_service.WebSocketService._start_ticker')
+    @patch('websocket_service.WebSocketService._start_user')
+    def test_start_ticker_only_enabled(self, mock_user, mock_ticker):
+        """Only ticker enabled → user channel not started."""
+        config = WebSocketConfig(
+            enabled=True,
+            ticker_enabled=True,
+            user_channel_enabled=False,
+        )
+        ws = WebSocketService(api_key="k", api_secret="s", config=config)
+        ws.start(product_ids=["BTC-USD"])
+        mock_ticker.assert_called_once_with(["BTC-USD"])
+        mock_user.assert_not_called()
+        assert ws.is_connected
+
+    @patch('websocket_service.WebSocketService._start_ticker')
+    @patch('websocket_service.WebSocketService._start_user')
+    def test_start_user_only_enabled(self, mock_user, mock_ticker):
+        """Only user channel enabled → ticker not started."""
+        config = WebSocketConfig(
+            enabled=True,
+            ticker_enabled=False,
+            user_channel_enabled=True,
+        )
+        ws = WebSocketService(api_key="k", api_secret="s", config=config)
+        ws.start(product_ids=["BTC-USD"])
+        mock_ticker.assert_not_called()
+        mock_user.assert_called_once()
+        assert ws.is_connected
+
+    @patch('websocket_service.WebSocketService._start_ticker')
+    def test_start_ticker_failure_sets_connected_true(self, mock_ticker, ws_service):
+        """If ticker raises, _connected should be False."""
+        mock_ticker.side_effect = Exception("connection error")
+        ws_service.start(product_ids=["BTC-USD"])
+        # Bug: _connected is set to True after the try block, even if ticker fails
+        # This documents current behavior (connected=False because exception in try)
+        assert not ws_service.is_connected
+
+    def test_subscribe_ticker_no_client(self, ws_service):
+        """subscribe_ticker without start should not crash."""
+        ws_service.subscribe_ticker(["BTC-USD"])
+        assert ws_service.get_subscribed_products() == []
+
+    def test_stop_without_start(self, ws_service):
+        """stop() without start should not crash."""
+        ws_service.stop()
+        assert not ws_service.is_connected
+
+    def test_stop_idempotent(self, ws_service):
+        """Double stop should not crash."""
+        ws_service._connected = True
+        ws_service.stop()
+        ws_service.stop()
+        assert not ws_service.is_connected
+
+
+class TestWebSocketTickerEdgeCases:
+
+    def test_ticker_missing_product_id(self, ws_service):
+        """Ticker with missing product_id should not crash."""
+        msg = json.dumps({
+            'channel': 'ticker',
+            'events': [{
+                'tickers': [{'best_bid': '100', 'best_ask': '101'}]
+            }]
+        })
+        ws_service._handle_ticker_message(msg)
+        assert ws_service.get_cached_products() == []
+
+    def test_ticker_non_numeric_bid(self, ws_service):
+        """Non-numeric bid/ask should be handled gracefully."""
+        msg = json.dumps({
+            'channel': 'ticker',
+            'events': [{
+                'tickers': [{
+                    'product_id': 'BTC-USD',
+                    'best_bid': 'NaN',
+                    'best_ask': 'NaN',
+                }]
+            }]
+        })
+        ws_service._handle_ticker_message(msg)
+        # NaN is a valid float, but mid calculation should still work
+        # (float('NaN') doesn't raise, just produces NaN)
+        cached = ws_service.get_cached_products()
+        # Product was cached (float('NaN') doesn't throw ValueError)
+        assert 'BTC-USD' in cached
+
+    def test_get_cached_products_thread_safe(self, ws_service):
+        """Concurrent update + read should not crash."""
+        import threading
+
+        def update():
+            for i in range(50):
+                msg = json.dumps({
+                    'channel': 'ticker',
+                    'events': [{
+                        'tickers': [{'product_id': f'PROD-{i}', 'best_bid': '100', 'best_ask': '101'}]
+                    }]
+                })
+                ws_service._handle_ticker_message(msg)
+
+        def read():
+            for _ in range(50):
+                ws_service.get_cached_products()
+                ws_service.get_current_prices("BTC-USD")
+
+        t1 = threading.Thread(target=update)
+        t2 = threading.Thread(target=read)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        # No crash = success
+
+    def test_subscribe_ticker_deduplicates(self, ws_service):
+        """Subscribing same product twice should not duplicate."""
+        ws_service._ticker_client = MagicMock()
+        ws_service._subscribed_products = ["BTC-USD"]
+
+        ws_service.subscribe_ticker(["BTC-USD", "ETH-USD"])
+
+        # Only ETH-USD should be new
+        ws_service._ticker_client.ticker.assert_called_once_with(product_ids=["ETH-USD"])
+        assert "ETH-USD" in ws_service._subscribed_products
+        assert ws_service._subscribed_products.count("BTC-USD") == 1

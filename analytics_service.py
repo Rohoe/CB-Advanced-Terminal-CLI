@@ -190,10 +190,12 @@ class AnalyticsService:
             worst_slippage, best_slippage, by_strategy.
         """
         params = []
-        where = ""
+        where_clauses = ["slippage_bps IS NOT NULL"]
         if product_id:
-            where = "WHERE product_id = ?"
+            where_clauses.append("product_id = ?")
             params.append(product_id)
+
+        where = "WHERE " + " AND ".join(where_clauses)
 
         row = self._db.fetchone(f"""
             SELECT
@@ -203,16 +205,6 @@ class AnalyticsService:
                 COUNT(*) as num_trades
             FROM pnl_ledger
             {where}
-            AND slippage_bps IS NOT NULL
-        """.replace("AND", "WHERE" if not where else "AND", 1) if not where else f"""
-            SELECT
-                COALESCE(AVG(slippage_bps), 0) as avg_slippage_bps,
-                COALESCE(MAX(slippage_bps), 0) as worst_slippage_bps,
-                COALESCE(MIN(slippage_bps), 0) as best_slippage_bps,
-                COUNT(*) as num_trades
-            FROM pnl_ledger
-            {where}
-            AND slippage_bps IS NOT NULL
         """, params or None)
 
         strategy_rows = self._db.fetchall(f"""
@@ -222,7 +214,6 @@ class AnalyticsService:
                 COUNT(*) as num_trades
             FROM pnl_ledger
             {where}
-            {"AND" if where else "WHERE"} slippage_bps IS NOT NULL
             GROUP BY strategy_type
         """, params or None)
 
@@ -447,7 +438,7 @@ class AnalyticsService:
             maker_ratio: Fraction of fills that were maker.
         """
         slippage_bps = None
-        if arrival_price and arrival_price > 0 and avg_price > 0:
+        if arrival_price is not None and arrival_price > 0 and avg_price > 0:
             if side == 'BUY':
                 slippage_bps = ((avg_price - arrival_price) / arrival_price) * 10000
             else:
